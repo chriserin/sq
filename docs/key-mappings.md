@@ -48,6 +48,7 @@
 - `o`: Toggle chord mode
 - `v`: Visual selection mode
 - `y`/`p`: Yank/paste
+- `bd`: Duplicate note/chord/selection
 - `m`/`M`: Mute/solo line
 - `u`/`U`: Undo/redo
 
@@ -139,6 +140,7 @@ Use +/- to increase/decrease values for each control, use numbers 0 -9 to direct
 | ToggleChordMode        | o            | Toggle chord mode. See [Chord Mode](#chord-mode-mappings)                                                                                                                                                                                                                              |
 | Yank                   | y            | Copy current selection to buffer. Copies all values of a visual selection or the value under cursor if no visual selection.                                                                                                                                                            |
 | Paste                  | p            | Paste the buffer at the position of the cursor                                                                                                                                                                                                                                         |
+| Duplicate              | b + d        | Duplicate what is under the cursor. For single notes: duplicates to the next open beat. For chords: duplicates the entire chord to the next beat after the chord is complete. For visual selections: duplicates selection to following area.                                           |
 | Quit                   | q            | Quit the application                                                                                                                                                                                                                                                                   |
 | Undo                   | u            | Undo last action                                                                                                                                                                                                                                                                       |
 | Redo                   | U            | Redo last undone action                                                                                                                                                                                                                                                                |
