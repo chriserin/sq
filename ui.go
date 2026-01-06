@@ -95,7 +95,6 @@ type model struct {
 	euclideanHits         uint8
 	ratchetCursor         uint8
 	temporaryNoteValue    uint8
-	focus                 operation.Focus
 	sectionSideIndicator  SectionSide
 	selectionIndicator    operation.Selection
 	patternMode           operation.PatternMode
@@ -104,6 +103,8 @@ type model struct {
 	visualSelection       VisualSelection
 	partSelectorIndex     int
 	needsWrite            int
+	editingPartID         int
+	focus                 operation.Focus
 	cancel                context.CancelFunc
 	currentOverlay        *overlays.Overlay
 	logFile               *os.File
@@ -1585,6 +1586,9 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 			}
 		case mappings.TogglePlayEdit:
 			m.playEditing = !m.playEditing
+			if m.playEditing {
+				m.editingPartID = m.CurrentPartID()
+			}
 		case mappings.NewLine:
 			if len(m.definition.Lines) < 100 {
 				lastLine := m.definition.Lines[len(m.definition.Lines)-1]
@@ -2640,6 +2644,7 @@ func (m model) UpdateDefinition(mapping mappings.Mapping) model {
 	}
 	if m.playState.Playing && !m.playEditing {
 		m.playEditing = true
+		m.editingPartID = m.CurrentPartID()
 		currentCycles := (*m.playState.Iterations)[m.arrangement.CurrentNode()]
 		playingOverlay := m.CurrentPart().Overlays.HighestMatchingOverlay(currentCycles)
 		m.currentOverlay = playingOverlay

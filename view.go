@@ -107,7 +107,6 @@ func (m model) View() (output string) {
 		buf.WriteString("\n")
 	}
 	if m.showArrangementView {
-		buf.WriteString("\n")
 		buf.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, "  ", m.arrangement.View(m.playState.LoopedArrangement)))
 	}
 	buf.WriteString("\n")
@@ -672,7 +671,17 @@ func (m model) CurrentOverlayView() string {
 
 	editOverlay := fmt.Sprintf("%s %s", editOverlayTitle, lipgloss.PlaceHorizontal(11, 0, m.ViewOverlay()))
 	playOverlay := fmt.Sprintf("%s %s", playOverlayTitle, lipgloss.PlaceHorizontal(11, 0, overlaykey.View(matchedKey)))
-	return fmt.Sprintf("   %s  %s  %s %s", monoIndicator, editOverlay, playOverlay, mappings.KeycomboView())
+	var name = ""
+	if m.playEditing {
+		name = (*m.definition.Parts)[m.editingPartID].GetName()
+	}
+	styled := lipgloss.NewStyle().Background(themes.SeqOverlayColor).Foreground(themes.AppTitleColor).Render(name)
+	var styledPlayingPart = ""
+	if m.playState.Playing {
+		styledPlayingPart = lipgloss.NewStyle().Foreground(themes.AppTitleColor).Render(m.CurrentPart().GetName())
+	}
+	secondLine := fmt.Sprintf("       %s %s", lipgloss.PlaceHorizontal(17, 0, styled), lipgloss.PlaceHorizontal(11, 0, styledPlayingPart))
+	return fmt.Sprintf("   %s  %s  %s %s\n%s", monoIndicator, editOverlay, playOverlay, mappings.KeycomboView(), secondLine)
 }
 
 func KeyLineIndicator(k uint8, l uint8) string {
