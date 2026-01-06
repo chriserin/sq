@@ -2635,7 +2635,9 @@ func convertSymbolToInt(symbol string) int64 {
 func (m model) UpdateDefinition(mapping mappings.Mapping) model {
 
 	deepCopy := overlays.DeepCopy(m.currentOverlay)
-	m.EnsureOverlay()
+	if !m.playEditing {
+		m.EnsureOverlay()
+	}
 	if m.playState.Playing && !m.playEditing {
 		m.playEditing = true
 		currentCycles := (*m.playState.Iterations)[m.arrangement.CurrentNode()]
