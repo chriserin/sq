@@ -10,7 +10,10 @@ import (
 	"github.com/Southclaws/fault"
 	"github.com/Southclaws/fault/fmsg"
 	"github.com/Southclaws/fault/ftag"
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/chriserin/sq/internal/config"
 	"github.com/chriserin/sq/internal/grid"
@@ -25,7 +28,7 @@ import (
 	midi "gitlab.com/gomidi/midi/v2"
 )
 
-func (m model) View() (output string) {
+func (m model) View() (output tea.View) {
 	defer func() {
 		if r := recover(); r != nil {
 			stackTrace := make([]byte, 4096)
@@ -33,7 +36,10 @@ func (m model) View() (output string) {
 			msg := panicMsg{message: fmt.Sprintf("Caught View Panic: %v", r), stacktrace: stackTrace[:n]}
 			m.LogString(fmt.Sprintf(" ------ Panic Message ------- \n%s\n", msg.message))
 			m.LogString(fmt.Sprintf(" ------ Stacktrace ---------- \n%s\n", msg.stacktrace))
-			output = fmt.Sprintf("View Layer Panic: %v\n", r)
+			v := tea.NewView(fmt.Sprintf("View Layer Panic: %v\n", r))
+			v.AltScreen = true
+			v.ReportFocus = true
+			output = v
 			m.errChan <- fault.New(fmt.Sprintf("caught view panic: %v", r), ftag.With("view_panic"), fmsg.WithDesc(fmt.Sprintf("%v", r), "View Panic"))
 		}
 	}()
@@ -44,7 +50,10 @@ func (m model) View() (output string) {
 		result += "Details in debug.log\n"
 		result += "Please consider reporting this issue\n"
 		result += "Ctrl+C or q to exit\n"
-		return result
+		v := tea.NewView(result)
+		v.AltScreen = true
+		v.ReportFocus = true
+		return v
 	}
 
 	var buf strings.Builder
@@ -110,7 +119,10 @@ func (m model) View() (output string) {
 		buf.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, "  ", m.arrangement.View(m.playState.LoopedArrangement)))
 	}
 	buf.WriteString("\n")
-	return buf.String()
+	v := tea.NewView(buf.String())
+	v.AltScreen = true
+	v.ReportFocus = true
+	return v
 }
 
 func GetShowLines(totalLinesCount int, visualCombinedPattern overlays.OverlayPattern, beats uint8) []uint8 {
@@ -611,7 +623,7 @@ func (m model) RatchetEditView() string {
 	var ratchetsBuf strings.Builder
 	buf.WriteString(" Ratchets ")
 	for i := range uint8(8) {
-		var backgroundColor lipgloss.Color
+		var backgroundColor color.Color
 		if i <= currentNote.Ratchets.Length {
 			if m.ratchetCursor == i && m.selectionIndicator == operation.SelectRatchets {
 				backgroundColor = themes.SelectedAttributeColor
@@ -744,7 +756,7 @@ func (m model) LineIndicator(lineNumber uint8) string {
 
 type GateSpace struct {
 	StringValue []rune
-	Color       lipgloss.Color
+	Color       color.Color
 }
 
 func (gs GateSpace) HasMore() bool {
@@ -774,7 +786,7 @@ func lineView(lineNumber uint8, m model, visualCombinedPattern overlays.OverlayP
 		currentGridKey := GK(uint8(lineNumber), i)
 		overlayNote, hasNote := visualCombinedPattern[currentGridKey]
 
-		var backgroundSeqColor lipgloss.Color
+		var backgroundSeqColor color.Color
 		var isCurrentBeat = m.playState.Playing && m.playState.LineStates[lineNumber].CurrentBeat == i
 		if isCurrentBeat {
 			backgroundSeqColor = themes.SeqCursorColor
@@ -844,10 +856,10 @@ func lineView(lineNumber uint8, m model, visualCombinedPattern overlays.OverlayP
 	return buf.String()
 }
 
-func ViewNoteComponents(currentNote grid.Note) (string, lipgloss.Color) {
+func ViewNoteComponents(currentNote grid.Note) (string, color.Color) {
 	currentAction := currentNote.Action
 	var char string
-	var foregroundColor lipgloss.Color
+	var foregroundColor color.Color
 	var waitShape string
 
 	if currentNote.WaitIndex > 0 {

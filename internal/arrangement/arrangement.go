@@ -24,8 +24,8 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"github.com/chriserin/sq/internal/overlaykey"
 	"github.com/chriserin/sq/internal/overlays"
 )
@@ -701,7 +701,7 @@ func IsSectionChangeMessage(msg tea.Msg, isEndNode bool) bool {
 		return false
 	}
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return key.Matches(msg, keys.Increase, keys.Decrease)
 	}
 	return false
@@ -712,7 +712,7 @@ func IsGroupChangeMessage(msg tea.Msg, isGroup bool) bool {
 		return false
 	}
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return key.Matches(msg, keys.Increase, keys.Decrease)
 	}
 	return false
@@ -727,7 +727,7 @@ var changeKeys = []key.Binding{
 
 func IsArrChangeMessage(msg tea.Msg) bool {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return key.Matches(msg, changeKeys...)
 	case NewPart:
 		return true
@@ -820,7 +820,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.ChangePart(msg.Index)
 	case NewPart:
 		m.NewPart(msg.Index, msg.After, msg.IsPlaying)
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch {
 		case Is(msg, keys.CursorDown):
 			if !m.Cursor.IsLastSibling() && m.Cursor.GetNextSiblingNode().IsGroup() {
@@ -974,7 +974,7 @@ func (m *Model) clamp(value int, min int, max int) int {
 	return value
 }
 
-func MappingToNumber(msg tea.KeyMsg) (int, bool) {
+func MappingToNumber(msg tea.KeyPressMsg) (int, bool) {
 	if msg.String() >= "0" && msg.String() <= "9" {
 		beatInterval, err := strconv.ParseInt(msg.String(), 0, 8)
 		if err != nil {
@@ -988,7 +988,7 @@ func MappingToNumber(msg tea.KeyMsg) (int, bool) {
 type GiveBackFocus struct{}
 type RenamePart struct{}
 
-func Is(msg tea.KeyMsg, k key.Binding) bool {
+func Is(msg tea.KeyPressMsg, k key.Binding) bool {
 	return key.Matches(msg, k)
 }
 

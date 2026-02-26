@@ -10,7 +10,7 @@ import (
 
 	"github.com/Southclaws/fault"
 	"github.com/Southclaws/fault/fmsg"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/chriserin/sq/internal/beats"
 	"github.com/chriserin/sq/internal/playstate"
 	"github.com/chriserin/sq/internal/seqmidi"

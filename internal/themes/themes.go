@@ -5,7 +5,9 @@
 package themes
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 	"github.com/chriserin/sq/internal/grid"
 )
 
@@ -838,7 +840,7 @@ var AppTitleColor,
 	ArrangementHeaderColor,
 	ArrangementGroupColor,
 	ArrangementIndentColor,
-	ArrangementSelectedLineColor lipgloss.Color
+	ArrangementSelectedLineColor color.Color
 
 // Styles
 var AppTitleStyle,

@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/chriserin/sq/internal/arrangement"
 	"github.com/chriserin/sq/internal/config"
 	"github.com/chriserin/sq/internal/grid"

@@ -15,12 +15,12 @@ import (
 	"github.com/Southclaws/fault"
 	"github.com/Southclaws/fault/fmsg"
 	"github.com/Southclaws/fault/ftag"
-	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/cursor"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/chriserin/sq/internal/arrangement"
 	"github.com/chriserin/sq/internal/beats"
 	"github.com/chriserin/sq/internal/config"
@@ -762,7 +762,7 @@ func InitModel(filename string, midiConnection *seqmidi.MidiConnection, options 
 
 	newCursor := cursor.New()
 	newCursor.BlinkSpeed = 600 * time.Millisecond
-	newCursor.Style = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "255", Dark: "0"})
+	newCursor.Style = lipgloss.NewStyle().Background(lipgloss.Color("0"))
 
 	lockReceiverChannel := make(chan bool)
 	unlockReceiverChannel := make(chan bool)
@@ -810,7 +810,7 @@ func InitTextInput() textinput.Model {
 	ti.Placeholder = "------"
 	ti.Prompt = ""
 	ti.CharLimit = 20
-	ti.Width = 20
+	ti.SetWidth(20)
 	ti.Focus()
 	return ti
 }
@@ -819,7 +819,7 @@ func (m model) LogTeaMsg(msg tea.Msg) {
 	switch msg := msg.(type) {
 	case beats.BeatMsg:
 		m.LogString(fmt.Sprintf("beatMsg %d %d\n", msg.Interval, m.definition.Tempo))
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		m.LogString(fmt.Sprintf("keyMsg %s\n", msg.String()))
 	case cursor.BlinkMsg:
 	default:
@@ -882,7 +882,7 @@ func RunProgram(filename string, options ProgramOptions) (*tea.Program, error) {
 		model.midiLoopMode = timing.MlmTransmitter
 	}
 
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithReportFocus())
+	program := tea.NewProgram(model)
 	SetupTimingLoop(model, beatsLooper, program.Send, ctx)
 	beatsLooper.Loop(program.Send, midiConnection, ctx)
 	midiConnection.LoopMidi(ctx)
@@ -930,11 +930,11 @@ func (m model) Init() tea.Cmd {
 	return func() tea.Msg { return tea.FocusMsg{} }
 }
 
-func Is(msg tea.KeyMsg, k ...key.Binding) bool {
+func Is(msg tea.KeyPressMsg, k ...key.Binding) bool {
 	return key.Matches(msg, k...)
 }
 
-func IsNot(msg tea.KeyMsg, k ...key.Binding) bool {
+func IsNot(msg tea.KeyPressMsg, k ...key.Binding) bool {
 	return !key.Matches(msg, k...)
 }
 
@@ -965,7 +965,7 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 		m.SetCurrentError(errors.New(msg.message))
 		m.LogString(fmt.Sprintf(" ------ Panic Message ------- \n%s\n", msg.message))
 		m.LogString(fmt.Sprintf(" ------ Stacktrace ---------- \n%s\n", msg.stacktrace))
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 
 		mapping := mappings.ProcessKey(msg, m.focus, m.selectionIndicator, m.definition.TemplateSequencerType, m.patternMode)
 

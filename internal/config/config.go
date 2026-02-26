@@ -12,7 +12,9 @@ import (
 	"strings"
 
 	"github.com/aarzilli/golua/lua"
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 	"github.com/chriserin/sq/internal/grid"
 	"github.com/chriserin/sq/internal/operation"
 )
@@ -44,20 +46,20 @@ const C1 = 36
 
 type lineaction struct {
 	Shape string
-	Color lipgloss.Color
+	Color color.Color
 }
 
 var Lineactions = map[grid.Action]lineaction{
-	grid.ActionNothing:     {" ", "#000000"},
-	grid.ActionLineReset:   {"↔", "#cf142b"},
-	grid.ActionLineReverse: {"←", "#f8730e"},
-	// grid.ActionLineReverseAll:  {"←͚͒", "#f8730e"},
-	grid.ActionLineSkipBeat:  {"⇒", "#a9e5bb"},
-	grid.ActionLineResetAll:  {"⇚", "#fcf6b1"},
-	grid.ActionLineBounce:    {"↨", "#fcf6b1"},
-	grid.ActionLineBounceAll: {"↨͚͒", "#fcf6b1"},
-	grid.ActionLineDelay:     {"ℤ", "#cc4bc2"},
-	grid.ActionSpecificValue: {"V", "#cc4bc2"},
+	grid.ActionNothing:     {" ", lipgloss.Color("#000000")},
+	grid.ActionLineReset:   {"↔", lipgloss.Color("#cf142b")},
+	grid.ActionLineReverse: {"←", lipgloss.Color("#f8730e")},
+	// grid.ActionLineReverseAll:  {"←͚͒", lipgloss.Color("#f8730e")},
+	grid.ActionLineSkipBeat:  {"⇒", lipgloss.Color("#a9e5bb")},
+	grid.ActionLineResetAll:  {"⇚", lipgloss.Color("#fcf6b1")},
+	grid.ActionLineBounce:    {"↨", lipgloss.Color("#fcf6b1")},
+	grid.ActionLineBounceAll: {"↨͚͒", lipgloss.Color("#fcf6b1")},
+	grid.ActionLineDelay:     {"ℤ", lipgloss.Color("#cc4bc2")},
+	grid.ActionSpecificValue: {"V", lipgloss.Color("#cc4bc2")},
 }
 
 type ratchetDiacritical string

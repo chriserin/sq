@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/chriserin/sq/internal/grid"
 	"github.com/chriserin/sq/internal/mappings"
 	"github.com/chriserin/sq/internal/operation"
@@ -46,7 +46,7 @@ func processTestKey(testKey TestKey, m model) (model, tea.Cmd) {
 	var cmd tea.Cmd
 	var updateModel tea.Model
 	for _, key := range testKey.Keys {
-		keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}}
+		keyMsg := tea.KeyPressMsg{Code: key, Text: string(key)}
 		updateModel, cmd = m.Update(keyMsg)
 		switch um := updateModel.(type) {
 		case model:
@@ -75,7 +75,7 @@ func processMapping(mapping mappings.Mapping, m model) (model, tea.Cmd) {
 	var updateModel tea.Model
 	switch mapping.Command {
 	case mappings.NumberPattern:
-		keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(mapping.LastValue)}
+		keyMsg := tea.KeyPressMsg{Code: rune(mapping.LastValue[0]), Text: mapping.LastValue}
 		updateModel, cmd = m.Update(keyMsg)
 		switch um := updateModel.(type) {
 		case model:
@@ -85,11 +85,11 @@ func processMapping(mapping mappings.Mapping, m model) (model, tea.Cmd) {
 	return m, cmd
 }
 
-func getKeyMsgs(command mappings.Command) []tea.KeyMsg {
+func getKeyMsgs(command mappings.Command) []tea.KeyPressMsg {
 	keys := mappings.KeysForCommand(command)
-	var keyMsgs []tea.KeyMsg
+	var keyMsgs []tea.KeyPressMsg
 	for _, key := range keys {
-		keyMsgs = append(keyMsgs, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		keyMsgs = append(keyMsgs, tea.KeyPressMsg{Code: rune(key[0]), Text: key})
 	}
 	return keyMsgs
 }

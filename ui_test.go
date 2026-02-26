@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/chriserin/sq/internal/arrangement"
 	"github.com/chriserin/sq/internal/operation"
 	"github.com/chriserin/sq/internal/overlaykey"
@@ -38,19 +38,19 @@ func TestUpdateArrangementFocus(t *testing.T) {
 		}
 
 		initialNodeCount := m.arrangement.Root.CountEndNodes()
-		updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+		updatedModel, _ := m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 		modelPtr := updatedModel.(model)
 
 		assert.Equal(t, operation.FocusArrangementEditor, modelPtr.focus, "Model should have arrangement editor focus")
 		assert.True(t, modelPtr.arrangement.Focus, "Arrangement model should have focus flag set to true")
 
-		updatedModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+		updatedModel, _ = updatedModel.Update(tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 		modelPtr = updatedModel.(model)
 
 		assert.Equal(t, operation.FocusArrangementEditor, modelPtr.focus, "Model should have arrangement editor focus")
 		assert.True(t, modelPtr.arrangement.Focus, "Arrangement model should have focus flag set to true")
 
-		updatedModelAfterPart, _ := updatedModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		updatedModelAfterPart, _ := updatedModel.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		finalModel := updatedModelAfterPart.(model)
 
 		finalNodeCount := finalModel.arrangement.Root.CountEndNodes()

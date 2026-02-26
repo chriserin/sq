@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/chriserin/sq/internal/operation"
 )
 
-var Keycombo = make([]tea.KeyMsg, 0, 3)
+var Keycombo = make([]tea.KeyPressMsg, 0, 3)
 var timer *time.Timer
 var mutex = sync.Mutex{}
 
@@ -622,10 +622,10 @@ type OperationKey struct {
 
 var mappings = registry{
 	OperationKey{key: k("b", "p")}:                                          MidiPanic,
-	OperationKey{focus: operation.FocusAny, key: k(" ")}:                    PlayStop,
-	OperationKey{focus: operation.FocusAny, key: k("'", " ")}:               PlayOverlayLoop,
-	OperationKey{focus: operation.FocusAny, key: k(":", " ")}:               PlayRecord,
-	OperationKey{focus: operation.FocusAny, key: k(";", " ")}:               PlayAlong,
+	OperationKey{focus: operation.FocusAny, key: k("space")}:                PlayStop,
+	OperationKey{focus: operation.FocusAny, key: k("'", "space")}:           PlayOverlayLoop,
+	OperationKey{focus: operation.FocusAny, key: k(":", "space")}:           PlayRecord,
+	OperationKey{focus: operation.FocusAny, key: k(";", "space")}:           PlayAlong,
 	OperationKey{focus: operation.FocusGrid, key: k("+")}:                   Increase,
 	OperationKey{focus: operation.FocusGrid, key: k("=")}:                   Increase,
 	OperationKey{focus: operation.FocusGrid, key: k("-")}:                   Decrease,
@@ -671,8 +671,8 @@ var mappings = registry{
 	OperationKey{focus: operation.FocusAny, key: k("]", "s")}:               NextSection,
 	OperationKey{focus: operation.FocusGrid, key: k("g")}:                   GateDecrease,
 	OperationKey{focus: operation.FocusGrid, key: k("e")}:                   GateBigDecrease,
-	OperationKey{focus: operation.FocusAny, key: k("alt+ ")}:                PlayLoop,
-	OperationKey{focus: operation.FocusAny, key: k("ctrl+@")}:               PlayPart,
+	OperationKey{focus: operation.FocusAny, key: k("alt+space")}:            PlayLoop,
+	OperationKey{focus: operation.FocusAny, key: k("ctrl+space")}:           PlayPart,
 	OperationKey{focus: operation.FocusAny, key: k("ctrl+]")}:               NewSectionAfter,
 	OperationKey{focus: operation.FocusGrid, key: k("ctrl+b")}:              BeatInputSwitch,
 	OperationKey{focus: operation.FocusGrid, key: k("ctrl+k")}:              CyclesInputSwitch,
@@ -819,10 +819,10 @@ func ResetKeycombo() {
 	if timer != nil {
 		timer.Stop()
 	}
-	Keycombo = make([]tea.KeyMsg, 0, 3)
+	Keycombo = make([]tea.KeyPressMsg, 0, 3)
 }
 
-func ProcessKey(key tea.KeyMsg, focus operation.Focus, selection operation.Selection, seqtype operation.SequencerMode, patternMode operation.PatternMode) Mapping {
+func ProcessKey(key tea.KeyPressMsg, focus operation.Focus, selection operation.Selection, seqtype operation.SequencerMode, patternMode operation.PatternMode) Mapping {
 	mutex.Lock()
 	defer mutex.Unlock()
 	if len(Keycombo) < 3 {
@@ -883,14 +883,14 @@ func ProcessKey(key tea.KeyMsg, focus operation.Focus, selection operation.Selec
 		timer = time.AfterFunc(holdKeysTime, func() {
 			mutex.Lock()
 			defer mutex.Unlock()
-			Keycombo = make([]tea.KeyMsg, 0, 3)
+			Keycombo = make([]tea.KeyPressMsg, 0, 3)
 		})
 	}
 
 	if exists && HoldingKeys == command {
 		return Mapping{HoldingKeys, key.String()}
 	} else if exists {
-		Keycombo = make([]tea.KeyMsg, 0, 3)
+		Keycombo = make([]tea.KeyPressMsg, 0, 3)
 		return Mapping{command, key.String()}
 	} else {
 		return Mapping{HoldingKeys, key.String()}
