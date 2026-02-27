@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## [v0.1.0-beta.2](https://github.com/chriserin/sq/compare/v0.1.0-beta.1...v0.1.0-beta.2) (2026-02-26)
+
+### Features
+
+* view: Show editing/playing part [531f7d4](https://github.com/chriserin/sq/commit/531f7d4) 
+* grid: Duplicate chords [8a3fa41](https://github.com/chriserin/sq/commit/8a3fa41) 
+* grid: Duplicate note with > 1 beat gate [312acc3](https://github.com/chriserin/sq/commit/312acc3) 
+* grid: Duplicate note, selection, line(s) [c4517d9](https://github.com/chriserin/sq/commit/c4517d9) 
+* grid: Reverse line [d96c8ac](https://github.com/chriserin/sq/commit/d96c8ac) 
+* grid: Euclidean rhtyhms with bu [3875232](https://github.com/chriserin/sq/commit/3875232) 
+* grid: bounded loop responds to viz mode [ebdab08](https://github.com/chriserin/sq/commit/ebdab08) 
+* play: Play user defined loop in overlay [2319a98](https://github.com/chriserin/sq/commit/2319a98) 
+* chord: Name chord in chord view [2841531](https://github.com/chriserin/sq/commit/2841531) 
+* view: Label the root note as 'Foundation' [5403009](https://github.com/chriserin/sq/commit/5403009) 
+
+### Fixes
+
+* play: only ensure OL if not editing [56df37b](https://github.com/chriserin/sq/commit/56df37b) 
+* grid: Overlay on reverse zeros under notes [6cfb313](https://github.com/chriserin/sq/commit/6cfb313) 
+* accents: clamp accent start/end correctly [5721a42](https://github.com/chriserin/sq/commit/5721a42) 
+* play: ensuere midi notes played in line order [7914776](https://github.com/chriserin/sq/commit/7914776) 
+* grid: Eucl hits more than 9 [74f309b](https://github.com/chriserin/sq/commit/74f309b) 
+* play: actions in positions play as notes [0dc1133](https://github.com/chriserin/sq/commit/0dc1133) 
+* chord: Count inversions in 2nd octave again [85c0032](https://github.com/chriserin/sq/commit/85c0032) 
+* view: Remove semi intervals from chord view [b593415](https://github.com/chriserin/sq/commit/b593415) 
+* grid: Update playstate when NewLine added [3c067b5](https://github.com/chriserin/sq/commit/3c067b5) 
+* grid: Update playstate when adding a new line [51e6a4c](https://github.com/chriserin/sq/commit/51e6a4c) 
+
+
 ## [v0.1.0-beta.1](https://github.com/chriserin/sq/compare/v0.1.0-alpha.15...v0.1.0-beta.1) (2025-11-18)
 
 ### Features
