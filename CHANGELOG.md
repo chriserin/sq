@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## [v0.1.0-beta.3](https://github.com/chriserin/sq/compare/v0.1.0-beta.2...v0.1.0-beta.3) (2026-07-16)
+
+### Features
+
+No new features.
+
+
+### Fixes
+
+* ci: golang version to 1.26 [125bf0b](https://github.com/chriserin/sq/commit/125bf0b) 
+
+
 ## [v0.1.0-beta.2](https://github.com/chriserin/sq/compare/v0.1.0-beta.1...v0.1.0-beta.2) (2026-02-26)
 
 ### Features
