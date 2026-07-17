@@ -30,17 +30,17 @@ if [ "$1" == "WITHINSTALL" ]; then
 
 ### macOS (x86_64)
 
-1. Download sq-macos-x86_64.tar.gz
-2. Run xattr -c ./sq-macos-x86_64.tar.gz (to avoid "unknown developer" warning)
-3. Extract: tar xzvf sq-macos-x86_64.tar.gz
-4. Run ./sq-macos-x86_64/bin/sq
+1. Download sq-darwin-x86_64.tar.gz
+2. Run xattr -c ./sq-darwin-x86_64.tar.gz (to avoid "unknown developer" warning)
+3. Extract: tar xzvf sq-darwin-x86_64.tar.gz
+4. Run ./sq-darwin-x86_64/bin/sq
 
 ### macOS (arm64)
 
-1. Download sq-macos-arm64.tar.gz
-2. Run xattr -c ./sq-macos-arm64.tar.gz (to avoid "unknown developer" warning)
-3. Extract: tar xzvf sq-macos-arm64.tar.gz
-4. Run ./sq-macos-arm64/bin/sq
+1. Download sq-darwin-arm64.tar.gz
+2. Run xattr -c ./sq-darwin-arm64.tar.gz (to avoid "unknown developer" warning)
+3. Extract: tar xzvf sq-darwin-arm64.tar.gz
+4. Run ./sq-darwin-arm64/bin/sq
 
 ### Linux (x86_64)
 
