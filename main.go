@@ -59,7 +59,7 @@ func main() {
 		Use:   "version",
 		Short: "Version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("sq v%s\n", VERSION)
+			fmt.Printf("sq %s\n", VERSION)
 		},
 	}
 
