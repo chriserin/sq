@@ -462,9 +462,64 @@ func addTemplate(L *lua.State) int {
 	return 0
 }
 
+var ClockGateDeviceName string
+
+type ClockGateMapping struct {
+	Subdivision uint8 // 1-8, how many times per beat this mapping fires
+	Channel     uint8 // 1-indexed, same convention as grid.LineDefinition.Channel
+	Note        uint8
+}
+
+var ClockGateMappings []ClockGateMapping
+
+// Lua Function
+func setClockGates(L *lua.State) int {
+	if L.IsTable(1) {
+		L.GetField(1, "device")
+		ClockGateDeviceName = L.ToString(2)
+		L.Pop(1)
+
+		L.GetField(1, "gates")
+		if L.IsTable(2) {
+			for i := 1; true; i++ {
+				L.PushInteger(int64(i))
+				L.GetTable(2)
+				if L.IsTable(3) {
+					L.GetField(3, "subdivision")
+					subdivision := uint8(L.ToNumber(4))
+					L.Pop(1)
+					L.GetField(3, "channel")
+					channel := uint8(L.ToNumber(4))
+					L.Pop(1)
+					L.GetField(3, "note")
+					note := uint8(L.ToNumber(4))
+					L.Pop(1)
+
+					if subdivision == 0 || subdivision > 8 {
+						panic("Clock gate subdivision must be between 1 and 8")
+					}
+					ClockGateMappings = append(ClockGateMappings, ClockGateMapping{
+						Subdivision: subdivision,
+						Channel:     channel,
+						Note:        note,
+					})
+				} else {
+					break
+				}
+				L.Pop(1)
+			}
+		}
+		L.Pop(1)
+	} else {
+		panic("Clock gates not formatted correctly")
+	}
+	return 0
+}
+
 type LuaFn = lua.LuaGoFunction
 
 var seqFunctions = map[string]LuaFn{
 	"addtemplate":   addTemplate,
 	"addinstrument": addInstrument,
+	"setclockgates": setClockGates,
 }

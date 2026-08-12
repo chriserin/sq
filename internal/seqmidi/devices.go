@@ -7,16 +7,18 @@ import (
 
 	"github.com/Southclaws/fault"
 	"github.com/Southclaws/fault/fmsg"
+	"github.com/chriserin/sq/internal/config"
 	"gitlab.com/gomidi/midi/v2/drivers"
 )
 
 type OutDeviceInfo struct {
-	IsOpen   bool
-	Selected bool
-	IsDaw    bool
-	Out      drivers.Out
-	Name     string
-	Type     string
+	IsOpen      bool
+	Selected    bool
+	IsDaw       bool
+	IsClockGate bool
+	Out         drivers.Out
+	Name        string
+	Type        string
 }
 
 type InDeviceInfo struct {
@@ -95,7 +97,12 @@ func (mc *MidiConnection) UpdateOutDeviceList(driver drivers.Driver) error {
 				foundDevice = currentDevice
 				foundDevice.Out = out
 				foundDevice.IsOpen = false
-				if (mc.outportName != "" && foundDevice.Matches(mc.outportName)) || foundDevice.IsDaw {
+				if mc.outportName != "" && foundDevice.Matches(mc.outportName) {
+					foundDevice.Open()
+					if config.ClockGateDeviceName != "" && foundDevice.Matches(config.ClockGateDeviceName) {
+						foundDevice.IsClockGate = true
+					}
+				} else if foundDevice.IsDaw {
 					foundDevice.Open()
 				}
 				break
@@ -110,6 +117,9 @@ func (mc *MidiConnection) UpdateOutDeviceList(driver drivers.Driver) error {
 			if mc.outportName != "" && newDevice.Matches(mc.outportName) {
 				newDevice.Open()
 				newDevice.Selected = true
+				if config.ClockGateDeviceName != "" && newDevice.Matches(config.ClockGateDeviceName) {
+					newDevice.IsClockGate = true
+				}
 			}
 			for _, dawName := range dawOutports {
 				if strings.Contains(newDevice.Name, dawName) {

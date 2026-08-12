@@ -74,6 +74,7 @@ H1 │▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧▧�
 - **[Overlay System](docs/overlay-key.md)** — Mathematical variations and overlay keys
 - **[Actions](docs/actions.md)** — Playback cursor manipulation and sequencer actions
 - **[Key Mappings](docs/key-mappings.md)** — Complete keyboard shortcut reference
+- **[Clock Gates](docs/clock-gates.md)** — Send per-subdivision MIDI gates to drive Eurorack clocks and dividers
 
 ## Configuration
 

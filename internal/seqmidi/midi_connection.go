@@ -253,6 +253,30 @@ func (mc *MidiConnection) GetDawOutport() drivers.Out {
 	return nil
 }
 
+func (mc *MidiConnection) GetClockGateOutport() drivers.Out {
+	for _, device := range mc.outDevices {
+		if device.IsClockGate && device.IsOpen {
+			return device.Out
+		}
+	}
+	return nil
+}
+
+// SendClockGate sends directly to the armed clock-gate device, bypassing the
+// notereg-backed delayed-message queue (LoopMidi) so a clock-gate NoteOff
+// can't collide with notereg dedup state for a real sequence note sharing
+// the same channel/note. It still takes playMutex because the armed device
+// is always the same drivers.Out that LoopMidi writes to under that lock.
+func (mc *MidiConnection) SendClockGate(msg midi.Message) error {
+	out := mc.GetClockGateOutport()
+	if out == nil {
+		return nil
+	}
+	playMutex.Lock()
+	defer playMutex.Unlock()
+	return out.Send(msg)
+}
+
 func (mc *MidiConnection) SendStopMessage() error {
 	var selectedOutport = mc.GetDawOutport()
 

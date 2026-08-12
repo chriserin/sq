@@ -29,4 +29,23 @@ func TestProcessConfig(t *testing.T) {
 		assert.Equal(t, uint8(26), instrument.CCs[11].Value)
 		assert.Equal(t, uint8(120), instrument.CCs[11].UpperLimit)
 	})
+
+	t.Run("sets clock gates", func(t *testing.T) {
+		ProcessConfig("./testdata/AddClockGates.lua")
+		assert.Equal(t, "gategrid-test", ClockGateDeviceName)
+		assert.Contains(t, ClockGateMappings, ClockGateMapping{Subdivision: 1, Channel: 1, Note: 1})
+		assert.Contains(t, ClockGateMappings, ClockGateMapping{Subdivision: 2, Channel: 1, Note: 2})
+		assert.Contains(t, ClockGateMappings, ClockGateMapping{Subdivision: 2, Channel: 2, Note: 9})
+	})
+
+	t.Run("rejects out of range subdivision", func(t *testing.T) {
+		before := len(ClockGateMappings)
+		ProcessConfig("./testdata/AddClockGatesInvalidSubdivision.lua")
+		// Matches the existing addinstrument/addtemplate convention (config.go:383,459):
+		// a plain-string panic from a Lua-registered Go function is swallowed by
+		// golua's callEx (it only converts panics implementing `error`), so
+		// ProcessConfig doesn't itself panic here — the malformed entry is just
+		// never appended.
+		assert.Equal(t, before, len(ClockGateMappings))
+	})
 }

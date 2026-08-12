@@ -233,6 +233,7 @@ func (t *Timing) TransmitterLoop(sendFn func(tea.Msg), midiConnection *seqmidi.M
 					if t.pulseCount%(PPQN/24) == 0 {
 						clockChannel <- beats.ClockMsg{}
 					}
+					emitClockGates(midiConnection, t.pulseCount, t.PulseInterval())
 					if t.preRollBeats == 0 {
 						if t.pulseLimit == 0 || t.pulseCount < t.pulseLimit {
 							if t.transmitting {
