@@ -12,6 +12,7 @@ import (
 	"github.com/Southclaws/fault/fmsg"
 	tea "charm.land/bubbletea/v2"
 	"github.com/chriserin/sq/internal/beats"
+	"github.com/chriserin/sq/internal/config"
 	"github.com/chriserin/sq/internal/playstate"
 	"github.com/chriserin/sq/internal/seqmidi"
 	midi "gitlab.com/gomidi/midi/v2"
@@ -154,6 +155,7 @@ func (tmtr Transmitter) ActiveSense() error {
 func (t *Timing) TransmitterLoop(sendFn func(tea.Msg), midiConnection *seqmidi.MidiConnection) error {
 	var beatChannel = t.beatsLooper.BeatChannel
 	var clockChannel = t.beatsLooper.ClockChannel
+	var resetsSentChannel = t.beatsLooper.ResetsSentChannel
 	out, err := midiConnection.TransmitterOut()
 	if err != nil {
 		return fault.Wrap(err, fmsg.With("cannot open transmitter out"))
@@ -233,7 +235,9 @@ func (t *Timing) TransmitterLoop(sendFn func(tea.Msg), midiConnection *seqmidi.M
 					if t.pulseCount%(PPQN/24) == 0 {
 						clockChannel <- beats.ClockMsg{}
 					}
-					emitClockGates(midiConnection, t.pulseCount, t.PulseInterval())
+
+					stepAligned := t.pulseCount%(PPQN/t.subdivisions) == 0
+
 					if t.preRollBeats == 0 {
 						if t.pulseLimit == 0 || t.pulseCount < t.pulseLimit {
 							if t.transmitting {
@@ -244,18 +248,28 @@ func (t *Timing) TransmitterLoop(sendFn func(tea.Msg), midiConnection *seqmidi.M
 								}
 							}
 						}
-						if t.pulseCount%(PPQN/t.subdivisions) == 0 {
+						if stepAligned {
 							tickInterval := t.TickInterval()
 							beatChannel <- beats.BeatMsg{Interval: tickInterval}
+							if config.ResetDeviceName != "" {
+								select {
+								case <-resetsSentChannel:
+								case <-t.ctx.Done():
+									return
+								}
+							}
 						}
 					} else {
-						if t.pulseCount%(PPQN/t.subdivisions) == 0 {
+						if stepAligned {
 							t.preRollBeats--
 							if t.preRollBeats == 0 {
 								t.pulseCount = -1
 							}
 						}
 					}
+
+					emitClockGates(midiConnection, t.pulseCount, t.PulseInterval())
+
 					pulseInterval := t.PulseInterval()
 
 					adjuster := time.Since(t.playTime) - t.trackTime

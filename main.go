@@ -40,12 +40,14 @@ func main() {
 				}
 			}()
 
-			var err error
 			var filename string
 			if len(args) > 0 {
 				filename = args[0]
 			}
 			p, err := RunProgram(filename, cliOptions)
+			if err != nil {
+				log.Fatalf("%v\n", err)
+			}
 			_, err = p.Run()
 			if err != nil {
 				log.Fatalf("Program Failure: %v\n", err)

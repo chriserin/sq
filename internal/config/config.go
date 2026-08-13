@@ -516,10 +516,118 @@ func setClockGates(L *lua.State) int {
 	return 0
 }
 
+var ResetDeviceName string
+
+type ResetMapping struct {
+	Channel uint8
+	Note    uint8
+}
+
+var (
+	SongResetMapping       ResetMapping
+	PartStartResetMapping  ResetMapping
+	PartLoopResetMapping   ResetMapping
+	GroupStartResetMapping ResetMapping
+	GroupLoopResetMapping  ResetMapping
+)
+
+func readResetMapping(L *lua.State, field string) ResetMapping {
+	L.GetField(1, field)
+	var mapping ResetMapping
+	if L.IsTable(2) {
+		L.GetField(2, "channel")
+		mapping.Channel = uint8(L.ToNumber(3))
+		L.Pop(1)
+		L.GetField(2, "note")
+		mapping.Note = uint8(L.ToNumber(3))
+		L.Pop(1)
+	}
+	L.Pop(1)
+	return mapping
+}
+
+// Lua Function
+func setResets(L *lua.State) int {
+	if L.IsTable(1) {
+		L.GetField(1, "device")
+		ResetDeviceName = L.ToString(2)
+		L.Pop(1)
+
+		SongResetMapping = readResetMapping(L, "song")
+		PartStartResetMapping = readResetMapping(L, "partStart")
+		PartLoopResetMapping = readResetMapping(L, "partLoop")
+		GroupStartResetMapping = readResetMapping(L, "groupStart")
+		GroupLoopResetMapping = readResetMapping(L, "groupLoop")
+	} else {
+		panic("Resets not formatted correctly")
+	}
+	return 0
+}
+
+// ValidateClockGateResetOverlap returns an error if any configured reset
+// mapping shares a channel/note with a configured clock-gate mapping on the
+// same device. SendClockGate and SendReset (internal/seqmidi) have no shared
+// note-identity bookkeeping between them — each independently fires its own
+// NoteOn and schedules its own NoteOff on its own timer — so a channel/note
+// collision produces two uncoordinated NoteOn/NoteOff pairs racing on the
+// same note instead of a well-defined signal (one can cut the other's pulse
+// short, or the two overlap into an ambiguous double-trigger).
+//
+// Only checked when both are pointed at the same device name — if they're
+// configured for different devices there's no actual collision, since they
+// go out on different physical ports.
+//
+// Called once at startup, before any MIDI connection or the TUI exist, so a
+// misconfiguration is reported as a plain CLI message and the process exits
+// before ever reaching the TUI, rather than surfacing as a confusing runtime
+// MIDI glitch during playback.
+func ValidateClockGateResetOverlap() error {
+	if ClockGateDeviceName == "" || ResetDeviceName == "" || ClockGateDeviceName != ResetDeviceName {
+		return nil
+	}
+
+	type noteKey struct {
+		channel uint8
+		note    uint8
+	}
+
+	gateKeys := make(map[noteKey]uint8, len(ClockGateMappings)) // value: subdivision, for the error message
+	for _, m := range ClockGateMappings {
+		gateKeys[noteKey{m.Channel, m.Note}] = m.Subdivision
+	}
+
+	resetKinds := []struct {
+		name    string
+		mapping ResetMapping
+	}{
+		{"song", SongResetMapping},
+		{"partStart", PartStartResetMapping},
+		{"partLoop", PartLoopResetMapping},
+		{"groupStart", GroupStartResetMapping},
+		{"groupLoop", GroupLoopResetMapping},
+	}
+
+	for _, rk := range resetKinds {
+		if rk.mapping.Channel == 0 {
+			continue // unconfigured
+		}
+		if subdivision, collides := gateKeys[noteKey{rk.mapping.Channel, rk.mapping.Note}]; collides {
+			return fmt.Errorf(
+				"config error: clock gate (subdivision %d) and reset %q both target channel %d, note %d on device %q — "+
+					"give them different notes so their NoteOn/NoteOff pairs don't collide",
+				subdivision, rk.name, rk.mapping.Channel, rk.mapping.Note, ClockGateDeviceName,
+			)
+		}
+	}
+
+	return nil
+}
+
 type LuaFn = lua.LuaGoFunction
 
 var seqFunctions = map[string]LuaFn{
 	"addtemplate":   addTemplate,
 	"addinstrument": addInstrument,
 	"setclockgates": setClockGates,
+	"setresets":     setResets,
 }

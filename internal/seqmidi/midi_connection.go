@@ -277,6 +277,29 @@ func (mc *MidiConnection) SendClockGate(msg midi.Message) error {
 	return out.Send(msg)
 }
 
+func (mc *MidiConnection) GetResetOutport() drivers.Out {
+	for _, device := range mc.outDevices {
+		if device.IsReset && device.IsOpen {
+			return device.Out
+		}
+	}
+	return nil
+}
+
+// SendReset sends directly to the armed reset device, for the same reason
+// SendClockGate bypasses LoopMidi's notereg-backed queue: a reset NoteOff
+// racing notereg's dedup-by-(channel,note) against a real sequence note or a
+// clock gate sharing that key could leave a note or gate stuck on.
+func (mc *MidiConnection) SendReset(msg midi.Message) error {
+	out := mc.GetResetOutport()
+	if out == nil {
+		return nil
+	}
+	playMutex.Lock()
+	defer playMutex.Unlock()
+	return out.Send(msg)
+}
+
 func (mc *MidiConnection) SendStopMessage() error {
 	var selectedOutport = mc.GetDawOutport()
 

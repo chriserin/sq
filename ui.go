@@ -869,6 +869,10 @@ func RunProgram(filename string, options ProgramOptions) (*tea.Program, error) {
 
 	midiConnection := seqmidi.InitMidiConnection(options.outport, options.midiout, ctx)
 	config.Init()
+	if err := config.ValidateClockGateResetOverlap(); err != nil {
+		cancel()
+		return nil, err
+	}
 	themes.ChooseTheme(options.theme)
 	model := InitModel(filename, midiConnection, options, cancel)
 	model.ResetIterations()
@@ -2021,6 +2025,13 @@ func (m *model) Start(delay time.Duration) {
 
 	if m.playState.Playing {
 		time.AfterFunc(delay, func() {
+			// NOTE: Order matters here, the initial reset must be sent before
+			// modelMsg/startMsg so it precedes every clock-gate pulse, including
+			// pulse 0 (see resets.md §6) — only for the two loop modes that
+			// actually reset the cursor to the top of the song above.
+			if m.playState.LoopMode == playstate.OneTimeWholeSequence || m.playState.LoopMode == playstate.LoopWholeSequence {
+				beats.EmitResets(m.midiConnection, beats.InitialResetEvents(m.arrangement.Cursor))
+			}
 			// NOTE: Order matters here, modelMsg must be sent before startMsg
 			updateChannel <- beats.ModelMsg{Sequence: m.definition, PlayState: m.playState, Cursor: m.arrangement.Cursor}
 			if m.playState.PlayMode != playstate.PlayReceiver {

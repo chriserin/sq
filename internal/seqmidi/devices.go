@@ -16,6 +16,7 @@ type OutDeviceInfo struct {
 	Selected    bool
 	IsDaw       bool
 	IsClockGate bool
+	IsReset     bool
 	Out         drivers.Out
 	Name        string
 	Type        string
@@ -102,6 +103,9 @@ func (mc *MidiConnection) UpdateOutDeviceList(driver drivers.Driver) error {
 					if config.ClockGateDeviceName != "" && foundDevice.Matches(config.ClockGateDeviceName) {
 						foundDevice.IsClockGate = true
 					}
+					if config.ResetDeviceName != "" && foundDevice.Matches(config.ResetDeviceName) {
+						foundDevice.IsReset = true
+					}
 				} else if foundDevice.IsDaw {
 					foundDevice.Open()
 				}
@@ -119,6 +123,9 @@ func (mc *MidiConnection) UpdateOutDeviceList(driver drivers.Driver) error {
 				newDevice.Selected = true
 				if config.ClockGateDeviceName != "" && newDevice.Matches(config.ClockGateDeviceName) {
 					newDevice.IsClockGate = true
+				}
+				if config.ResetDeviceName != "" && newDevice.Matches(config.ResetDeviceName) {
+					newDevice.IsReset = true
 				}
 			}
 			for _, dawName := range dawOutports {

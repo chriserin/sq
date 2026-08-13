@@ -48,4 +48,42 @@ func TestProcessConfig(t *testing.T) {
 		// never appended.
 		assert.Equal(t, before, len(ClockGateMappings))
 	})
+
+	t.Run("sets resets", func(t *testing.T) {
+		ProcessConfig("./testdata/AddResets.lua")
+		assert.Equal(t, "gategrid-test", ResetDeviceName)
+		assert.Equal(t, ResetMapping{Channel: 1, Note: 60}, SongResetMapping)
+		assert.Equal(t, ResetMapping{Channel: 1, Note: 61}, PartStartResetMapping)
+		assert.Equal(t, ResetMapping{Channel: 1, Note: 63}, PartLoopResetMapping)
+		assert.Equal(t, ResetMapping{Channel: 1, Note: 62}, GroupStartResetMapping)
+		assert.Equal(t, ResetMapping{Channel: 1, Note: 64}, GroupLoopResetMapping)
+	})
+
+	t.Run("leaves loop mappings unconfigured when omitted", func(t *testing.T) {
+		ProcessConfig("./testdata/AddResetsFirstEntryOnly.lua")
+		assert.Equal(t, ResetMapping{Channel: 1, Note: 61}, PartStartResetMapping)
+		assert.Equal(t, ResetMapping{}, PartLoopResetMapping)
+		assert.Equal(t, ResetMapping{Channel: 1, Note: 62}, GroupStartResetMapping)
+		assert.Equal(t, ResetMapping{}, GroupLoopResetMapping)
+	})
+
+	t.Run("detects a clock gate and reset colliding on the same device/channel/note", func(t *testing.T) {
+		ProcessConfig("./testdata/ClockGateResetCollision.lua")
+		err := ValidateClockGateResetOverlap()
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), "partStart")
+			assert.Contains(t, err.Error(), "collision-test")
+			assert.Contains(t, err.Error(), "channel 1, note 50")
+		}
+	})
+
+	t.Run("no error when clock gates and resets target different devices", func(t *testing.T) {
+		ProcessConfig("./testdata/ClockGateResetDifferentDevices.lua")
+		assert.NoError(t, ValidateClockGateResetOverlap())
+	})
+
+	t.Run("no error when channel/notes don't overlap on the same device", func(t *testing.T) {
+		ProcessConfig("./testdata/ClockGateResetNoCollision.lua")
+		assert.NoError(t, ValidateClockGateResetOverlap())
+	})
 }

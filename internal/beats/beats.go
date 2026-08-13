@@ -37,11 +37,12 @@ type ModelPlayedMsg struct {
 type AnticipatoryStop struct{}
 
 type BeatsLooper struct {
-	ClockChannel  chan ClockMsg
-	BeatChannel   chan BeatMsg
-	UpdateChannel chan ModelMsg
-	PlayQueue     chan seqmidi.Message
-	ErrChan       chan error
+	ClockChannel      chan ClockMsg
+	BeatChannel       chan BeatMsg
+	UpdateChannel     chan ModelMsg
+	PlayQueue         chan seqmidi.Message
+	ErrChan           chan error
+	ResetsSentChannel chan struct{}
 }
 
 func InitBeatsLooper() BeatsLooper {
@@ -50,13 +51,23 @@ func InitBeatsLooper() BeatsLooper {
 	updateChannel := make(chan ModelMsg)
 	playQueue := make(chan seqmidi.Message)
 	errChan := make(chan error)
+	// Buffered (capacity 1), not unbuffered: Beat()'s signal is a non-blocking
+	// send (see Beat) so it's safe when nothing ever reads this channel
+	// (StandAloneLoop/ReceiverLoop). With an unbuffered channel that send
+	// would race TransmitterLoop reaching its receive — if Beat() signals
+	// before TransmitterLoop is actually waiting, the non-blocking send finds
+	// no ready receiver and silently drops the wakeup, hanging TransmitterLoop
+	// forever. A capacity-1 buffer lets the send succeed immediately
+	// regardless of whether the receiver has reached its select yet.
+	resetsSentChannel := make(chan struct{}, 1)
 
 	return BeatsLooper{
-		ClockChannel:  clockChannel,
-		BeatChannel:   beatChannel,
-		UpdateChannel: updateChannel,
-		PlayQueue:     playQueue,
-		ErrChan:       errChan,
+		ClockChannel:      clockChannel,
+		BeatChannel:       beatChannel,
+		UpdateChannel:     updateChannel,
+		PlayQueue:         playQueue,
+		ErrChan:           errChan,
+		ResetsSentChannel: resetsSentChannel,
 	}
 }
 
@@ -96,7 +107,7 @@ func (bl BeatsLooper) Loop(sendFn func(tea.Msg), midiConn *seqmidi.MidiConnectio
 				case <-bl.ClockChannel:
 					bl.PlayQueue <- seqmidi.Message{Msg: midi.TimingClock(), Delay: 0}
 				case BeatMsg := <-bl.BeatChannel:
-					bl.Beat(BeatMsg, playState, definition, cursor, sendFn)
+					bl.Beat(BeatMsg, playState, definition, cursor, sendFn, midiConn)
 				case <-ctx.Done():
 					return
 				case err := <-bl.ErrChan:
@@ -133,10 +144,27 @@ func IsDone(playState playstate.PlayState, currentNode *arrangement.Arrangement,
 		!(cursor.AllLastSiblings() && playState.Iterations.IsFull(cursor) && playState.PlayMode == playstate.PlayReceiver && playState.LoopMode != playstate.LoopWholeSequence)
 }
 
-func (bl BeatsLooper) Beat(msg BeatMsg, playState playstate.PlayState, definition sequence.Sequence, cursor arrangement.ArrCursor, sendFn func(tea.Msg)) {
-	if playState.Playing {
-		AdvancePlayState(&playState, definition, &cursor)
+func (bl BeatsLooper) Beat(msg BeatMsg, playState playstate.PlayState, definition sequence.Sequence, cursor arrangement.ArrCursor, sendFn func(tea.Msg), midiConn *seqmidi.MidiConnection) {
+	signaled := false
+	signalResetsSent := func() {
+		if signaled {
+			return
+		}
+		signaled = true
+		select {
+		case bl.ResetsSentChannel <- struct{}{}:
+		default:
+		}
 	}
+	defer signalResetsSent() // safety net if something below returns/panics early
+
+	if playState.Playing {
+		resetEvents := AdvancePlayState(&playState, definition, &cursor)
+		if playState.Playing {
+			EmitResets(midiConn, resetEvents) // sent before signaling — this IS the ordering guarantee
+		}
+	}
+	signalResetsSent() // real signal point, as early as possible
 
 	if !playState.Playing {
 		sendFn(ModelPlayedMsg{PerformStop: true, PlayState: playState, Cursor: cursor})
@@ -156,7 +184,7 @@ func (bl BeatsLooper) Beat(msg BeatMsg, playState playstate.PlayState, definitio
 	copiedPlayState := playstate.Copy(playState)
 	copiedCursor := make(arrangement.ArrCursor, len(cursor))
 	copy(copiedCursor, cursor)
-	AdvancePlayState(&copiedPlayState, definition, &copiedCursor)
+	AdvancePlayState(&copiedPlayState, definition, &copiedCursor) // speculative only — discard returned events
 	if !copiedPlayState.Playing {
 		sendFn(AnticipatoryStop{})
 	}
@@ -209,7 +237,12 @@ func (bl BeatsLooper) PlaySequence(playState *playstate.PlayState, definition se
 	}
 }
 
-func AdvancePlayState(playState *playstate.PlayState, definition sequence.Sequence, cursor *arrangement.ArrCursor) {
+// AdvancePlayState advances playback by one beat and returns the set of
+// song/part/group reset events (see resets.go) that happened as a result,
+// if any. It returns nil whenever nothing actually advanced (not playing,
+// or the first beat of a fresh start where AllowAdvance is still false) and
+// whenever playback just stopped rather than restarted.
+func AdvancePlayState(playState *playstate.PlayState, definition sequence.Sequence, cursor *arrangement.ArrCursor) []ResetEvent {
 	currentNode := (*cursor)[len(*cursor)-1]
 	currentSection := (*cursor)[len(*cursor)-1].Section
 	partID := currentSection.Part
@@ -217,27 +250,50 @@ func AdvancePlayState(playState *playstate.PlayState, definition sequence.Sequen
 	currentCycles := (*playState.Iterations)[currentNode]
 	playingOverlay := currentPart.Overlays.HighestMatchingOverlay(currentCycles)
 
-	if playState.Playing {
-		// NOTE: Only advance if we've already played the first beat.
-		if playState.AllowAdvance {
-			advanceCurrentBeat(currentCycles, *playingOverlay, playState.LineStates, currentPart.Beats, playState.BoundedLoop, playState.LoopMode)
-			advanceKeyCycle(definition.Keyline, playState.LineStates, playState.LoopMode, currentNode, playState.Iterations)
-			if IsDone(*playState, currentNode, currentSection, cursor) && playState.LoopMode != playstate.LoopOverlay {
-				if PlayMove(cursor, playState.Iterations, playState.LoopedArrangement) || playState.PlayMode == playstate.PlayReceiver {
-					currentSection = (*cursor)[len(*cursor)-1].Section
-					currentNode = (*cursor)[len(*cursor)-1]
-					if !currentSection.KeepCycles {
-						(*playState.Iterations)[currentNode] = currentSection.StartCycles
-					}
-					playState.LineStates = playstate.InitLineStates(len(definition.Lines), playState.LineStates, uint8((*cursor)[len(*cursor)-1].Section.StartBeat))
-				} else {
-					playState.Playing = false
-					return
-				}
+	if !playState.Playing || !playState.AllowAdvance {
+		return nil
+	}
+
+	preCursor := make(arrangement.ArrCursor, len(*cursor))
+	copy(preCursor, *cursor)
+	preIterations := make(playstate.Iterations, len(preCursor))
+	for _, n := range preCursor[:len(preCursor)-1] {
+		preIterations[n] = (*playState.Iterations)[n]
+	}
+
+	advanceCurrentBeat(currentCycles, *playingOverlay, playState.LineStates, currentPart.Beats, playState.BoundedLoop, playState.LoopMode)
+	wrapped := advanceKeyCycle(definition.Keyline, playState.LineStates, playState.LoopMode, currentNode, playState.Iterations)
+
+	forcedSongRestart := false
+	if IsDone(*playState, currentNode, currentSection, cursor) && playState.LoopMode != playstate.LoopOverlay {
+		moved := PlayMove(cursor, playState.Iterations, playState.LoopedArrangement)
+		if moved || playState.PlayMode == playstate.PlayReceiver {
+			if !moved {
+				// PlayMove found nothing left to loop back to (cursor.IsRoot()
+				// branch) and reset the cursor via MoveNext() without touching
+				// any Iterations counter — only the IsLastSibling loop-back
+				// branch does that, so the diff below can't see this on its own.
+				// IsDone's own PlayReceiver/AllLastSiblings/IsFull guard makes
+				// this hard to reach in practice — most PlayReceiver
+				// end-of-arrangement cases never call PlayMove at all — but if
+				// it ever is reached, this is unambiguously a genuine restart,
+				// so record it explicitly rather than relying on the generic
+				// diff.
+				forcedSongRestart = true
 			}
+			currentSection = (*cursor)[len(*cursor)-1].Section
+			currentNode = (*cursor)[len(*cursor)-1]
+			if !currentSection.KeepCycles {
+				(*playState.Iterations)[currentNode] = currentSection.StartCycles
+			}
+			playState.LineStates = playstate.InitLineStates(len(definition.Lines), playState.LineStates, uint8((*cursor)[len(*cursor)-1].Section.StartBeat))
+		} else {
+			playState.Playing = false
+			return nil
 		}
 	}
 
+	return diffResetEvents(preCursor, wrapped, *cursor, playState.Iterations, preIterations, forcedSongRestart)
 }
 
 func CurrentBeatGridKeys(gridKeys *[]grid.GridKey, lineStates []playstate.LineState, hasSolo bool) {
@@ -259,10 +315,16 @@ func advanceCurrentBeat(keyCycles int, playingOverlay overlays.Overlay, lineStat
 	}
 }
 
-func advanceKeyCycle(keyline uint8, lineStates []playstate.LineState, loopMode playstate.LoopMode, node *arrangement.Arrangement, iterations *playstate.Iterations) {
+// advanceKeyCycle returns true iff the keyline wrapped back to beat 0 this
+// call — i.e. the current node's content just started a new pass through
+// itself, whether or not that pass turns out to be its last (IsDone/PlayMove
+// decide that separately).
+func advanceKeyCycle(keyline uint8, lineStates []playstate.LineState, loopMode playstate.LoopMode, node *arrangement.Arrangement, iterations *playstate.Iterations) bool {
 	if lineStates[keyline].CurrentBeat == 0 && loopMode != playstate.LoopOverlay {
 		(*iterations)[node]++
+		return true
 	}
+	return false
 }
 
 func PlayMove(cursor *arrangement.ArrCursor, iterations *playstate.Iterations, loopNode *arrangement.Arrangement) bool {
