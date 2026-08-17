@@ -20,6 +20,7 @@ type PlayState struct {
 	BeatTime           time.Time
 	LineStates         []LineState
 	Iterations         *Iterations
+	Baseline           *Iterations
 	LoopedArrangement  *arrangement.Arrangement
 	BoundedLoop        BoundedLoop
 }
@@ -240,6 +241,10 @@ func Copy(playState PlayState) PlayState {
 	newIterations := make(Iterations)
 	maps.Copy(newIterations, *playState.Iterations)
 	playState.Iterations = &newIterations
+
+	newBaseline := make(Iterations)
+	maps.Copy(newBaseline, *playState.Baseline)
+	playState.Baseline = &newBaseline
 
 	newLineStates := make([]LineState, len(playState.LineStates))
 	copy(newLineStates, playState.LineStates)

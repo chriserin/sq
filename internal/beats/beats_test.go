@@ -2,6 +2,7 @@ package beats
 
 import (
 	"context"
+	"maps"
 	"testing"
 	"time"
 
@@ -334,6 +335,9 @@ func PlayTestLoop(sequence sequence.Sequence, cursor arrangement.ArrCursor, limi
 	playstate.BuildIterationsMap(sequence.Arrangement, &iterations)
 	playState.LineStates = playstate.InitLineStates(1, []playstate.LineState{}, 0)
 	playState.Iterations = &iterations
+	baseline := make(playstate.Iterations, len(iterations))
+	maps.Copy(baseline, iterations)
+	playState.Baseline = &baseline
 
 	updateChannel <- ModelMsg{
 		PlayState: playState,

@@ -58,8 +58,7 @@ to a physical gate output; leave the rest out. The same subdivision can
 appear more than once with different channel/note pairs if you want one
 clock rate driving two separate outputs.
 
-Add this to your `init.lua` (see [Configuration](../README.md#configuration)
-for where sq looks for it).
+Add this to your `init.lua` (see [Configuration](../README.md#configuration)).
 
 ### Behavior
 

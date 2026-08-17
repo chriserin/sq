@@ -159,9 +159,10 @@ func (bl BeatsLooper) Beat(msg BeatMsg, playState playstate.PlayState, definitio
 	defer signalResetsSent() // safety net if something below returns/panics early
 
 	if playState.Playing {
-		resetEvents := AdvancePlayState(&playState, definition, &cursor)
-		if playState.Playing {
-			EmitResets(midiConn, resetEvents) // sent before signaling — this IS the ordering guarantee
+		wrappedToPartStart := AdvancePlayState(&playState, definition, &cursor)
+		if playState.Playing && wrappedToPartStart {
+			resetEvents := computeResetEvents(cursor, playState.Iterations, playState.Baseline)
+			EmitResets(midiConn, resetEvents) // sent before clock gates
 		}
 	}
 	signalResetsSent() // real signal point, as early as possible
@@ -184,7 +185,7 @@ func (bl BeatsLooper) Beat(msg BeatMsg, playState playstate.PlayState, definitio
 	copiedPlayState := playstate.Copy(playState)
 	copiedCursor := make(arrangement.ArrCursor, len(cursor))
 	copy(copiedCursor, cursor)
-	AdvancePlayState(&copiedPlayState, definition, &copiedCursor) // speculative only — discard returned events
+	AdvancePlayState(&copiedPlayState, definition, &copiedCursor) // speculative only — only PlayState is examined, computeResetEvents is never called
 	if !copiedPlayState.Playing {
 		sendFn(AnticipatoryStop{})
 	}
@@ -237,12 +238,22 @@ func (bl BeatsLooper) PlaySequence(playState *playstate.PlayState, definition se
 	}
 }
 
-// AdvancePlayState advances playback by one beat and returns the set of
-// song/part/group reset events (see resets.go) that happened as a result,
-// if any. It returns nil whenever nothing actually advanced (not playing,
-// or the first beat of a fresh start where AllowAdvance is still false) and
-// whenever playback just stopped rather than restarted.
-func AdvancePlayState(playState *playstate.PlayState, definition sequence.Sequence, cursor *arrangement.ArrCursor) []ResetEvent {
+// AdvancePlayState advances playback by one beat and reports whether the
+// keyline wrapped as a result — i.e. whether it's meaningful to ask
+// computeResetEvents (see resets.go) what song/part/group reset events, if
+// any, resulted from this beat. Advancing playback and determining which
+// reset events happened are deliberately separate: a caller that only cares
+// about the resulting PlayState (e.g. Beat()'s speculative lookahead) can
+// skip computeResetEvents entirely instead of computing and discarding it.
+//
+// Returns false whenever nothing actually advanced (not playing, or the
+// first beat of a fresh start where AllowAdvance is still false) and
+// whenever playback just stopped rather than restarted — in the stop case
+// this is false regardless of whether the keyline actually wrapped this
+// beat, since cursor.IsRoot()'s MoveNext() (see PlayMove) can reset the
+// cursor to its start position as a side effect of stopping, which must
+// not be misread as a fresh restart.
+func AdvancePlayState(playState *playstate.PlayState, definition sequence.Sequence, cursor *arrangement.ArrCursor) bool {
 	currentNode := (*cursor)[len(*cursor)-1]
 	currentSection := (*cursor)[len(*cursor)-1].Section
 	partID := currentSection.Part
@@ -251,49 +262,29 @@ func AdvancePlayState(playState *playstate.PlayState, definition sequence.Sequen
 	playingOverlay := currentPart.Overlays.HighestMatchingOverlay(currentCycles)
 
 	if !playState.Playing || !playState.AllowAdvance {
-		return nil
-	}
-
-	preCursor := make(arrangement.ArrCursor, len(*cursor))
-	copy(preCursor, *cursor)
-	preIterations := make(playstate.Iterations, len(preCursor))
-	for _, n := range preCursor[:len(preCursor)-1] {
-		preIterations[n] = (*playState.Iterations)[n]
+		return false
 	}
 
 	advanceCurrentBeat(currentCycles, *playingOverlay, playState.LineStates, currentPart.Beats, playState.BoundedLoop, playState.LoopMode)
 	wrapped := advanceKeyCycle(definition.Keyline, playState.LineStates, playState.LoopMode, currentNode, playState.Iterations)
 
-	forcedSongRestart := false
 	if IsDone(*playState, currentNode, currentSection, cursor) && playState.LoopMode != playstate.LoopOverlay {
 		moved := PlayMove(cursor, playState.Iterations, playState.LoopedArrangement)
 		if moved || playState.PlayMode == playstate.PlayReceiver {
-			if !moved {
-				// PlayMove found nothing left to loop back to (cursor.IsRoot()
-				// branch) and reset the cursor via MoveNext() without touching
-				// any Iterations counter — only the IsLastSibling loop-back
-				// branch does that, so the diff below can't see this on its own.
-				// IsDone's own PlayReceiver/AllLastSiblings/IsFull guard makes
-				// this hard to reach in practice — most PlayReceiver
-				// end-of-arrangement cases never call PlayMove at all — but if
-				// it ever is reached, this is unambiguously a genuine restart,
-				// so record it explicitly rather than relying on the generic
-				// diff.
-				forcedSongRestart = true
-			}
 			currentSection = (*cursor)[len(*cursor)-1].Section
 			currentNode = (*cursor)[len(*cursor)-1]
 			if !currentSection.KeepCycles {
 				(*playState.Iterations)[currentNode] = currentSection.StartCycles
 			}
+			(*playState.Baseline)[currentNode] = (*playState.Iterations)[currentNode]
 			playState.LineStates = playstate.InitLineStates(len(definition.Lines), playState.LineStates, uint8((*cursor)[len(*cursor)-1].Section.StartBeat))
 		} else {
 			playState.Playing = false
-			return nil
+			return false
 		}
 	}
 
-	return diffResetEvents(preCursor, wrapped, *cursor, playState.Iterations, preIterations, forcedSongRestart)
+	return wrapped
 }
 
 func CurrentBeatGridKeys(gridKeys *[]grid.GridKey, lineStates []playstate.LineState, hasSolo bool) {

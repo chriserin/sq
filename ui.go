@@ -1978,6 +1978,10 @@ func (m *model) ResetIterations() {
 	iterations := make(playstate.Iterations)
 	playstate.BuildIterationsMap(m.arrangement.Root, &iterations)
 	m.playState.Iterations = &iterations
+
+	baseline := make(playstate.Iterations, len(iterations))
+	maps.Copy(baseline, iterations)
+	m.playState.Baseline = &baseline
 }
 
 func (m *model) Start(delay time.Duration) {
@@ -2030,7 +2034,7 @@ func (m *model) Start(delay time.Duration) {
 			// pulse 0 (see resets.md §6) — only for the two loop modes that
 			// actually reset the cursor to the top of the song above.
 			if m.playState.LoopMode == playstate.OneTimeWholeSequence || m.playState.LoopMode == playstate.LoopWholeSequence {
-				beats.EmitResets(m.midiConnection, beats.InitialResetEvents(m.arrangement.Cursor))
+				beats.EmitResets(m.midiConnection, beats.InitialResetEvents(m.arrangement.Cursor, m.playState.Iterations, m.playState.Baseline))
 			}
 			// NOTE: Order matters here, modelMsg must be sent before startMsg
 			updateChannel <- beats.ModelMsg{Sequence: m.definition, PlayState: m.playState, Cursor: m.arrangement.Cursor}
