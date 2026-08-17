@@ -531,6 +531,21 @@ var (
 	GroupLoopResetMapping  ResetMapping
 )
 
+// ResetRange describes a contiguous span of MIDI notes on one channel, used
+// to assign individually-distinguishable resets to parts/groups (see
+// resets-pool.md) rather than sharing a single note across every part or
+// group.
+type ResetRange struct {
+	Channel   uint8
+	StartNote uint8
+	EndNote   uint8
+}
+
+var (
+	StartResetRange ResetRange
+	LoopResetRange  ResetRange
+)
+
 func readResetMapping(L *lua.State, field string) ResetMapping {
 	L.GetField(1, field)
 	var mapping ResetMapping
@@ -546,6 +561,40 @@ func readResetMapping(L *lua.State, field string) ResetMapping {
 	return mapping
 }
 
+func readResetRange(L *lua.State, field string) ResetRange {
+	L.GetField(1, field)
+	var r ResetRange
+	if L.IsTable(2) {
+		L.GetField(2, "channel")
+		r.Channel = uint8(L.ToNumber(3))
+		L.Pop(1)
+		L.GetField(2, "startnote")
+		startNote := L.ToNumber(3)
+		L.Pop(1)
+		L.GetField(2, "endnote")
+		endNote := L.ToNumber(3)
+		L.Pop(1)
+
+		// Checked against the raw Lua number, not uint8(startNote)/uint8(endNote):
+		// a value like 300 would silently wrap around (300 % 256 = 44) if cast
+		// before validating, passing as a bogus but "valid-looking" uint8.
+		if startNote < 0 || startNote > 127 {
+			panic(fmt.Sprintf("resets %q startnote must be between 0 and 127", field))
+		}
+		if endNote < 0 || endNote > 127 {
+			panic(fmt.Sprintf("resets %q endnote must be between 0 and 127", field))
+		}
+		r.StartNote = uint8(startNote)
+		r.EndNote = uint8(endNote)
+
+		if r.EndNote < r.StartNote {
+			panic(fmt.Sprintf("resets %q endnote must be >= startnote", field))
+		}
+	}
+	L.Pop(1)
+	return r
+}
+
 // Lua Function
 func setResets(L *lua.State) int {
 	if L.IsTable(1) {
@@ -558,6 +607,8 @@ func setResets(L *lua.State) int {
 		PartLoopResetMapping = readResetMapping(L, "partLoop")
 		GroupStartResetMapping = readResetMapping(L, "groupStart")
 		GroupLoopResetMapping = readResetMapping(L, "groupLoop")
+		StartResetRange = readResetRange(L, "starts")
+		LoopResetRange = readResetRange(L, "loops")
 	} else {
 		panic("Resets not formatted correctly")
 	}
@@ -581,14 +632,14 @@ func setResets(L *lua.State) int {
 // misconfiguration is reported as a plain CLI message and the process exits
 // before ever reaching the TUI, rather than surfacing as a confusing runtime
 // MIDI glitch during playback.
+type noteKey struct {
+	channel uint8
+	note    uint8
+}
+
 func ValidateClockGateResetOverlap() error {
 	if ClockGateDeviceName == "" || ResetDeviceName == "" || ClockGateDeviceName != ResetDeviceName {
 		return nil
-	}
-
-	type noteKey struct {
-		channel uint8
-		note    uint8
 	}
 
 	gateKeys := make(map[noteKey]uint8, len(ClockGateMappings)) // value: subdivision, for the error message
@@ -620,6 +671,31 @@ func ValidateClockGateResetOverlap() error {
 		}
 	}
 
+	if err := validateResetRangeOverlap("starts", StartResetRange, gateKeys, ClockGateDeviceName); err != nil {
+		return err
+	}
+	if err := validateResetRangeOverlap("loops", LoopResetRange, gateKeys, ClockGateDeviceName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateResetRangeOverlap checks every note in r (if configured) against
+// gateKeys, mirroring the scalar-mapping check above one note at a time.
+func validateResetRangeOverlap(name string, r ResetRange, gateKeys map[noteKey]uint8, device string) error {
+	if r.Channel == 0 {
+		return nil
+	}
+	for note := r.StartNote; note <= r.EndNote; note++ {
+		if subdivision, collides := gateKeys[noteKey{r.Channel, note}]; collides {
+			return fmt.Errorf(
+				"config error: clock gate (subdivision %d) and reset range %q both target channel %d, note %d on device %q — "+
+					"give them different notes so their NoteOn/NoteOff pairs don't collide",
+				subdivision, name, r.Channel, note, device,
+			)
+		}
+	}
 	return nil
 }
 

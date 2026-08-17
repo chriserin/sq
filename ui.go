@@ -12,15 +12,15 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Southclaws/fault"
-	"github.com/Southclaws/fault/fmsg"
-	"github.com/Southclaws/fault/ftag"
 	"charm.land/bubbles/v2/cursor"
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Southclaws/fault"
+	"github.com/Southclaws/fault/fmsg"
+	"github.com/Southclaws/fault/ftag"
 	"github.com/chriserin/sq/internal/arrangement"
 	"github.com/chriserin/sq/internal/beats"
 	"github.com/chriserin/sq/internal/config"
@@ -1982,6 +1982,9 @@ func (m *model) ResetIterations() {
 	baseline := make(playstate.Iterations, len(iterations))
 	maps.Copy(baseline, iterations)
 	m.playState.Baseline = &baseline
+
+	m.playState.StartPoolNotes, m.playState.LoopPoolNotes =
+		beats.ArrangementPoolNotes(m.arrangement.Root, config.StartResetRange, config.LoopResetRange)
 }
 
 func (m *model) Start(delay time.Duration) {
@@ -2034,7 +2037,7 @@ func (m *model) Start(delay time.Duration) {
 			// pulse 0 (see resets.md §6) — only for the two loop modes that
 			// actually reset the cursor to the top of the song above.
 			if m.playState.LoopMode == playstate.OneTimeWholeSequence || m.playState.LoopMode == playstate.LoopWholeSequence {
-				beats.EmitResets(m.midiConnection, beats.InitialResetEvents(m.arrangement.Cursor, m.playState.Iterations, m.playState.Baseline))
+				beats.EmitResets(m.midiConnection, beats.InitialResetEvents(m.arrangement.Cursor, m.playState.Iterations, m.playState.Baseline), m.playState.StartPoolNotes, m.playState.LoopPoolNotes)
 			}
 			// NOTE: Order matters here, modelMsg must be sent before startMsg
 			updateChannel <- beats.ModelMsg{Sequence: m.definition, PlayState: m.playState, Cursor: m.arrangement.Cursor}

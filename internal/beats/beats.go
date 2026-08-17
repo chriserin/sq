@@ -162,7 +162,7 @@ func (bl BeatsLooper) Beat(msg BeatMsg, playState playstate.PlayState, definitio
 		wrappedToPartStart := AdvancePlayState(&playState, definition, &cursor)
 		if playState.Playing && wrappedToPartStart {
 			resetEvents := computeResetEvents(cursor, playState.Iterations, playState.Baseline)
-			EmitResets(midiConn, resetEvents) // sent before clock gates
+			EmitResets(midiConn, resetEvents, playState.StartPoolNotes, playState.LoopPoolNotes) // sent before clock gates
 		}
 	}
 	signalResetsSent() // real signal point, as early as possible

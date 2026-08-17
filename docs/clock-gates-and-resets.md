@@ -113,6 +113,47 @@ sq.setresets({
 
 Add any combination of the above to your configuration.
 
+### Individually-distinguishable part/group resets
+
+The five mappings above are shared — every part fires the same `partStart`
+note, every group fires the same `groupStart` note.
+
+`sq` can also send start and loop events for individual parts and groups by
+establishing a pool of notes, from which a group or part can be assigned a
+note.
+
+```lua
+sq.setresets({
+	device = "MIDI-to-CV",
+	-- ... song/partStart/partLoop/groupStart/groupLoop as above ...
+	starts = { channel = 1, startnote = 20, endnote = 27 },
+	loops  = { channel = 1, startnote = 30, endnote = 37 },
+})
+```
+
+- **`starts`** — fires an additional note, specific to the part or group,
+  alongside every `partStart`/`groupStart` event.
+- **`loops`** — the same, alongside every `partLoop`/`groupLoop` event.
+- Both are a single contiguous range of notes on one channel (`channel`,
+  `startnote`, `endnote`), and are **shared between parts and groups** —
+  not a separate range for each.
+- Assignment is sticky and deterministic: the first time a part or group is
+  encountered at start time, it claims the next note in the range and
+  keeps it for the rest of the session. The same named part reused in multiple
+  places in the arrangement always claims the same note, since it's really the
+  same part playing again — a group node, since groups don't have a reusable
+  identity the way named parts do, is scoped to that specific place in the
+  arrangement.
+- If there are more distinct parts/groups than notes in the range, the
+  range wraps around — a part and an unrelated group can end up sharing an
+  output once the range is exhausted. This is expected, not an error: it
+  just means that one output now represents "a start happened here",
+  shared by whichever entities wrapped onto it.
+- When two or more nested groups start on the same beat, each one still
+  gets its own individual `starts`/`loops` note — but the shared
+  `groupStart`/`groupLoop` mapping above only ever fires once per beat,
+  regardless of how many levels started together.
+
 ### Behavior
 
 - Resets are guaranteed to be sent before any clock gate
@@ -120,6 +161,9 @@ Add any combination of the above to your configuration.
   doesn't fire a song started reset event, since those don't move the cursor to
   the top of the song.
 - Resets and Clocks configured to the same device+channel+note is disallowed at startup
+- The same collision check applies to `starts`/`loops`: any note in either
+  range that matches a configured clock gate on the same device is
+  disallowed at startup, the same as the scalar mappings above.
 
 ## Requirement: `--midiout` must match your `device`
 

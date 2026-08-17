@@ -21,8 +21,15 @@ type PlayState struct {
 	LineStates         []LineState
 	Iterations         *Iterations
 	Baseline           *Iterations
-	LoopedArrangement  *arrangement.Arrangement
-	BoundedLoop        BoundedLoop
+	// StartPoolNotes/LoopPoolNotes hold each arrangement node's
+	// individually-assigned reset note (see beats.ArrangementPoolNotes),
+	// computed once per play session. Unlike Iterations/Baseline these are
+	// never mutated after Start(), so Copy() intentionally shares the same
+	// map rather than deep-copying it.
+	StartPoolNotes    map[*arrangement.Arrangement]uint8
+	LoopPoolNotes     map[*arrangement.Arrangement]uint8
+	LoopedArrangement *arrangement.Arrangement
+	BoundedLoop       BoundedLoop
 }
 
 type BoundedLoop struct {

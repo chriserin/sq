@@ -23,6 +23,10 @@ const (
 
 type ResetEvent struct {
 	Kind ResetKind
+	// Node is the specific Part leaf or Group node that triggered this
+	// event, used to look up a Start/Loop range note (see reset_pool.go).
+	// Always nil for ResetKindSong (Song doesn't participate in the pools).
+	Node *arrangement.Arrangement
 }
 
 // computeResetEvents inspects the cursor and Iterations map left by the
@@ -43,15 +47,19 @@ type ResetEvent struct {
 // looks like, checked via root's own Nodes[0]/child baseline rather than
 // root's own value, which (unlike every other node) never returns to 0
 // after its first loop — its target is fixed at 1 by InitRoot.
+//
+// Every node genuinely implicated in the cascade gets its own event (not
+// collapsed onto a single outermost node), so a pool assignment (see
+// reset_pool.go) can hand each one its own distinct note; EmitResets is
+// responsible for still sending only one physical NoteOn per Kind on the
+// scalar mappings.
 func computeResetEvents(cursor arrangement.ArrCursor, iterations *playstate.Iterations, baseline *playstate.Iterations) []ResetEvent {
-
 	var events []ResetEvent
-	var highestZeroIterGroup *arrangement.Arrangement // shallowest still-fresh ancestor group seen so far
 
 	currentPart := cursor[len(cursor)-1]
-	events = append(events, ResetEvent{Kind: ResetKindPartLoop})
+	events = append(events, ResetEvent{Kind: ResetKindPartLoop, Node: currentPart})
 	if atBaseline(currentPart, iterations, baseline) {
-		events = append(events, ResetEvent{Kind: ResetKindPartStart})
+		events = append(events, ResetEvent{Kind: ResetKindPartStart, Node: currentPart})
 	}
 
 	for i := len(cursor) - 2; i >= 0; i-- {
@@ -65,28 +73,19 @@ func computeResetEvents(cursor arrangement.ArrCursor, iterations *playstate.Iter
 			break
 		}
 		if (*iterations)[groupNode] == 0 {
-			highestZeroIterGroup = groupNode
+			// Fresh entry at this level, possibly part of a cascade from
+			// further out -- gets its own pair and the climb continues.
+			events = append(events, ResetEvent{Kind: ResetKindGroupLoop, Node: groupNode}, ResetEvent{Kind: ResetKindGroupStart, Node: groupNode})
 		} else {
-			// This node's own counter just incremented — it's the
-			// local-loop trigger, nothing above it changed. A deeper fresh
-			// node, if any, still gets GroupStart, collapsed onto this
-			// same outer node since there's only one groupStart/groupLoop
-			// channel/note, no notion of depth.
-			events = append(events, ResetEvent{Kind: ResetKindGroupLoop})
-			if highestZeroIterGroup != nil {
-				events = append(events, ResetEvent{Kind: ResetKindGroupStart})
-			}
-			highestZeroIterGroup = nil
+			// This node's own counter just incremented: the local-loop
+			// trigger. Nothing above it changed, so the climb stops here.
+			events = append(events, ResetEvent{Kind: ResetKindGroupLoop, Node: groupNode})
 			break
 		}
 	}
 
-	if highestZeroIterGroup != nil {
-		events = append(events, ResetEvent{Kind: ResetKindGroupLoop}, ResetEvent{Kind: ResetKindGroupStart})
-	}
-
 	slices.SortFunc(events, func(a, b ResetEvent) int {
-		return int(int(a.Kind) - int(b.Kind))
+		return int(a.Kind) - int(b.Kind)
 	})
 	return events
 }
@@ -115,25 +114,76 @@ func InitialResetEvents(cursor arrangement.ArrCursor, iterations *playstate.Iter
 	return computeResetEvents(cursor, iterations, baseline)
 }
 
-func EmitResets(mc *seqmidi.MidiConnection, events []ResetEvent) {
+// resetSend is one physical NoteOn/NoteOff pulse to send: a 0-indexed
+// channel/note pair, independent of whether it came from a scalar mapping
+// or a pool note.
+type resetSend struct {
+	channel uint8
+	note    uint8
+}
+
+// resolveResetSends decides which physical pulses events should produce:
+// the scalar mapping for each distinct Kind present (at most one send per
+// Kind per beat, regardless of how many nodes cascaded — computeResetEvents
+// no longer collapses nested groups onto one node, so this dedup happens
+// here instead), plus, for every event with a Node, that node's
+// individually-assigned pool note (startPoolNotes/loopPoolNotes,
+// precomputed once per session — see reset_pool.go's ArrangementPoolNotes).
+//
+// Kept separate from EmitResets, and pure/side-effect-free, so the dedup
+// and pool-lookup logic is directly unit-testable: SendReset only sends
+// through an armed device (internal/seqmidi's outDevices, unexported), so
+// there's no way to observe EmitResets' actual sends from this package
+// without one.
+func resolveResetSends(events []ResetEvent, startPoolNotes, loopPoolNotes map[*arrangement.Arrangement]uint8) []resetSend {
+	var sends []resetSend
+	var scalarSent [5]bool // indexed by ResetKind
+
 	for _, ev := range events {
-		var m config.ResetMapping
+		if !scalarSent[ev.Kind] {
+			scalarSent[ev.Kind] = true
+			var m config.ResetMapping
+			switch ev.Kind {
+			case ResetKindSong:
+				m = config.SongResetMapping
+			case ResetKindPartStart:
+				m = config.PartStartResetMapping
+			case ResetKindPartLoop:
+				m = config.PartLoopResetMapping
+			case ResetKindGroupStart:
+				m = config.GroupStartResetMapping
+			case ResetKindGroupLoop:
+				m = config.GroupLoopResetMapping
+			}
+			if m.Channel != 0 {
+				sends = append(sends, resetSend{channel: m.Channel - 1, note: m.Note})
+			}
+		}
+
+		if ev.Node == nil {
+			continue // Song never participates in the pools
+		}
+		var poolNotes map[*arrangement.Arrangement]uint8
+		var channel uint8
 		switch ev.Kind {
-		case ResetKindSong:
-			m = config.SongResetMapping
-		case ResetKindPartStart:
-			m = config.PartStartResetMapping
-		case ResetKindPartLoop:
-			m = config.PartLoopResetMapping
-		case ResetKindGroupStart:
-			m = config.GroupStartResetMapping
-		case ResetKindGroupLoop:
-			m = config.GroupLoopResetMapping
+		case ResetKindPartStart, ResetKindGroupStart:
+			poolNotes, channel = startPoolNotes, config.StartResetRange.Channel
+		case ResetKindPartLoop, ResetKindGroupLoop:
+			poolNotes, channel = loopPoolNotes, config.LoopResetRange.Channel
 		}
-		if m.Channel == 0 {
-			continue // unconfigured — e.g. no partLoop set, so PartLoop events never fire
+		if channel == 0 {
+			continue // range unconfigured
 		}
-		sendResetPulse(mc, m.Channel-1, m.Note)
+		if note, ok := poolNotes[ev.Node]; ok {
+			sends = append(sends, resetSend{channel: channel - 1, note: note})
+		}
+	}
+	return sends
+}
+
+func EmitResets(mc *seqmidi.MidiConnection, events []ResetEvent, startPoolNotes, loopPoolNotes map[*arrangement.Arrangement]uint8) {
+	for _, s := range resolveResetSends(events, startPoolNotes, loopPoolNotes) {
+		sendResetPulse(mc, s.channel, s.note)
 	}
 }
 

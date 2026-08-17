@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/chriserin/sq/internal/arrangement"
+	"github.com/chriserin/sq/internal/config"
 	"github.com/chriserin/sq/internal/grid"
 	"github.com/chriserin/sq/internal/playstate"
 	"github.com/chriserin/sq/internal/sequence"
@@ -109,6 +110,22 @@ func kinds(events []ResetEvent) []ResetKind {
 	return result
 }
 
+// nodesForKind returns the Node of every event in events matching kind.
+// slices.SortFunc (computeResetEvents' final step) doesn't guarantee a
+// stable relative order among multiple events sharing the same Kind (e.g.
+// two nested groups both starting), so callers should compare the result
+// with assert.ElementsMatch, not assert.Equal, whenever more than one
+// event of that Kind is expected.
+func nodesForKind(events []ResetEvent, kind ResetKind) []*arrangement.Arrangement {
+	var nodes []*arrangement.Arrangement
+	for _, ev := range events {
+		if ev.Kind == kind {
+			nodes = append(nodes, ev.Node)
+		}
+	}
+	return nodes
+}
+
 func TestAdvancePlayState_ResetEvents(t *testing.T) {
 	t.Run("plain part-to-part move fires PartLoop and PartStart together, then stops with no false-positive song start", func(t *testing.T) {
 		sequence, cursor := SiblingSectionSequence()
@@ -199,9 +216,10 @@ func TestAdvancePlayState_ResetEvents(t *testing.T) {
 		// groupB (outer, iterations=2) contains only groupA (inner,
 		// iterations=1), which contains only nodeA. groupB genuinely loops
 		// back to its own first child — which is groupA again, the exact
-		// same pointer, since it's groupB's only child. Even so, groupA must
-		// report GroupStart (not GroupLoop, not nothing), because it's being
-		// freshly re-entered as a consequence of groupB's own loop-back.
+		// same pointer, since it's groupB's only child. groupA reports its
+		// own GroupStart+GroupLoop pair (it's being freshly re-entered as a
+		// consequence of groupB's own loop-back); groupB, the local-loop
+		// trigger itself, reports GroupLoop only — nothing above it changed.
 		sequence, cursor := NestedGroupsSequence()
 		(*sequence.Parts)[0].Beats = 1
 		cursor[1].Iterations = 2 // groupB
@@ -220,18 +238,24 @@ func TestAdvancePlayState_ResetEvents(t *testing.T) {
 		}
 
 		events := advanceAndCompute(&playState, sequence, &cursor)
-		assert.Equal(t, []ResetKind{ResetKindGroupStart, ResetKindGroupLoop, ResetKindPartStart, ResetKindPartLoop}, kinds(events))
+		assert.Equal(t, []ResetKind{ResetKindGroupStart, ResetKindGroupLoop, ResetKindGroupLoop, ResetKindPartStart, ResetKindPartLoop}, kinds(events))
 		assert.True(t, playState.Playing)
+
+		groupB, groupA, nodeA := cursor[1], cursor[2], cursor[3]
+		assert.Equal(t, []*arrangement.Arrangement{groupA}, nodesForKind(events, ResetKindGroupStart))
+		assert.ElementsMatch(t, []*arrangement.Arrangement{groupA, groupB}, nodesForKind(events, ResetKindGroupLoop))
+		assert.Equal(t, []*arrangement.Arrangement{nodeA}, nodesForKind(events, ResetKindPartStart))
+		assert.Equal(t, []*arrangement.Arrangement{nodeA}, nodesForKind(events, ResetKindPartLoop))
 	})
 
-	t.Run("entering two nested groups at once fires only one GroupLoop/GroupStart pair, not one per level", func(t *testing.T) {
-		// Regression test for a real bug: moving from a plain sibling part
-		// into a chain of nested groups (groupOuter -> groupInner) used to
-		// fire GroupStart once per group level, producing multiple NoteOn
-		// events on the exact same channel/note in the same beat — there's
-		// only one groupStart mapping configured, with no notion of depth,
-		// so entering N nested groups simultaneously must still be reported
-		// as a single GroupStart event.
+	t.Run("entering two nested groups at once fires a GroupStart/GroupLoop pair for each nesting level", func(t *testing.T) {
+		// computeResetEvents no longer collapses a multi-level cascade onto
+		// a single outermost node: moving from a plain sibling part into a
+		// chain of nested groups (groupOuter -> groupInner) now fires a
+		// distinct GroupStart+GroupLoop pair for each level, so a reset pool
+		// can hand each group its own note. EmitResets is responsible for
+		// still sending only one physical NoteOn on the scalar
+		// groupStart/groupLoop mappings regardless of how many levels fired.
 		sequence, cursor := nestedGroupSiblingSequence()
 		(*sequence.Parts)[0].Beats = 1
 		(*sequence.Parts)[1].Beats = 1
@@ -249,8 +273,14 @@ func TestAdvancePlayState_ResetEvents(t *testing.T) {
 		}
 
 		events := advanceAndCompute(&playState, sequence, &cursor)
-		assert.Equal(t, []ResetKind{ResetKindGroupStart, ResetKindGroupLoop, ResetKindPartStart, ResetKindPartLoop}, kinds(events))
+		assert.Equal(t, []ResetKind{ResetKindGroupStart, ResetKindGroupStart, ResetKindGroupLoop, ResetKindGroupLoop, ResetKindPartStart, ResetKindPartLoop}, kinds(events))
 		assert.True(t, playState.Playing)
+
+		groupOuter, groupInner, nodeA := cursor[1], cursor[2], cursor[3]
+		assert.ElementsMatch(t, []*arrangement.Arrangement{groupOuter, groupInner}, nodesForKind(events, ResetKindGroupStart))
+		assert.ElementsMatch(t, []*arrangement.Arrangement{groupOuter, groupInner}, nodesForKind(events, ResetKindGroupLoop))
+		assert.Equal(t, []*arrangement.Arrangement{nodeA}, nodesForKind(events, ResetKindPartStart))
+		assert.Equal(t, []*arrangement.Arrangement{nodeA}, nodesForKind(events, ResetKindPartLoop))
 	})
 
 	t.Run("moving from a plain part into a sibling group fires GroupLoop, GroupStart, PartLoop, and PartStart together", func(t *testing.T) {
@@ -516,16 +546,85 @@ func TestInitialResetEvents(t *testing.T) {
 		assert.Equal(t, []ResetKind{ResetKindSong, ResetKindGroupStart, ResetKindGroupLoop, ResetKindPartStart, ResetKindPartLoop}, kinds(events))
 	})
 
-	t.Run("song, two nested groups, and part fires only one GroupLoop/GroupStart pair", func(t *testing.T) {
-		// There's only one groupStart/groupLoop channel/note configured each
-		// — no notion of depth — so entering two nested groups at once must
-		// not produce two separate NoteOn events on the same channel/note.
+	t.Run("song, two nested groups, and part fires a GroupStart/GroupLoop pair for each nesting level", func(t *testing.T) {
+		// Every ancestor is freshly descended on the very first Play press,
+		// so each nesting level gets its own GroupStart+GroupLoop pair, same
+		// as the in-flight cascade case — EmitResets still sends only one
+		// physical NoteOn on the scalar groupStart/groupLoop mappings.
 		sequence, cursor := NestedGroupsSequence()
 		iterations := make(playstate.Iterations)
 		playstate.BuildIterationsMap(sequence.Arrangement, &iterations)
 		baseline := make(playstate.Iterations, len(iterations))
 		maps.Copy(baseline, iterations)
 		events := InitialResetEvents(cursor, &iterations, &baseline)
-		assert.Equal(t, []ResetKind{ResetKindSong, ResetKindGroupStart, ResetKindGroupLoop, ResetKindPartStart, ResetKindPartLoop}, kinds(events))
+		assert.Equal(t, []ResetKind{ResetKindSong, ResetKindGroupStart, ResetKindGroupStart, ResetKindGroupLoop, ResetKindGroupLoop, ResetKindPartStart, ResetKindPartLoop}, kinds(events))
+
+		groupB, groupA, nodeA := cursor[1], cursor[2], cursor[3]
+		assert.ElementsMatch(t, []*arrangement.Arrangement{groupB, groupA}, nodesForKind(events, ResetKindGroupStart))
+		assert.ElementsMatch(t, []*arrangement.Arrangement{groupB, groupA}, nodesForKind(events, ResetKindGroupLoop))
+		assert.Equal(t, []*arrangement.Arrangement{nodeA}, nodesForKind(events, ResetKindPartStart))
+		assert.Equal(t, []*arrangement.Arrangement{nodeA}, nodesForKind(events, ResetKindPartLoop))
 	})
+}
+
+func TestResolveResetSends(t *testing.T) {
+	origSong := config.SongResetMapping
+	origGroupStart, origGroupLoop := config.GroupStartResetMapping, config.GroupLoopResetMapping
+	origStartRange, origLoopRange := config.StartResetRange, config.LoopResetRange
+	t.Cleanup(func() {
+		config.SongResetMapping = origSong
+		config.GroupStartResetMapping, config.GroupLoopResetMapping = origGroupStart, origGroupLoop
+		config.StartResetRange, config.LoopResetRange = origStartRange, origLoopRange
+	})
+
+	config.SongResetMapping = config.ResetMapping{Channel: 4, Note: 60}
+	config.GroupStartResetMapping = config.ResetMapping{Channel: 1, Note: 50}
+	config.GroupLoopResetMapping = config.ResetMapping{Channel: 1, Note: 51}
+	config.StartResetRange = config.ResetRange{Channel: 2, StartNote: 20, EndNote: 27}
+	config.LoopResetRange = config.ResetRange{Channel: 3, StartNote: 30, EndNote: 37}
+
+	t.Run("two nodes cascading fire the scalar mapping once per Kind but their own pool note each", func(t *testing.T) {
+		groupA := &arrangement.Arrangement{}
+		groupB := &arrangement.Arrangement{}
+		startPoolNotes := map[*arrangement.Arrangement]uint8{groupA: 21, groupB: 22}
+		loopPoolNotes := map[*arrangement.Arrangement]uint8{groupA: 31, groupB: 32}
+
+		events := []ResetEvent{
+			{Kind: ResetKindGroupStart, Node: groupA},
+			{Kind: ResetKindGroupStart, Node: groupB},
+			{Kind: ResetKindGroupLoop, Node: groupA},
+			{Kind: ResetKindGroupLoop, Node: groupB},
+		}
+
+		sends := resolveResetSends(events, startPoolNotes, loopPoolNotes)
+
+		assert.Len(t, sends, 6, "2 scalar sends (one per Kind) + 4 pool sends (one per node per event)")
+		assert.Equal(t, 1, countSends(sends, resetSend{channel: 0, note: 50}), "groupStart scalar fires once, not twice")
+		assert.Equal(t, 1, countSends(sends, resetSend{channel: 0, note: 51}), "groupLoop scalar fires once, not twice")
+		assert.Contains(t, sends, resetSend{channel: 1, note: 21}) // groupA's own start pool note
+		assert.Contains(t, sends, resetSend{channel: 1, note: 22}) // groupB's own start pool note
+		assert.Contains(t, sends, resetSend{channel: 2, note: 31}) // groupA's own loop pool note
+		assert.Contains(t, sends, resetSend{channel: 2, note: 32}) // groupB's own loop pool note
+	})
+
+	t.Run("Song never participates in a pool", func(t *testing.T) {
+		sends := resolveResetSends([]ResetEvent{{Kind: ResetKindSong}}, nil, nil)
+		assert.Equal(t, []resetSend{{channel: config.SongResetMapping.Channel - 1, note: config.SongResetMapping.Note}}, sends)
+	})
+
+	t.Run("unconfigured pool produces no pool send, scalar still fires", func(t *testing.T) {
+		groupA := &arrangement.Arrangement{}
+		sends := resolveResetSends([]ResetEvent{{Kind: ResetKindGroupStart, Node: groupA}}, nil, nil)
+		assert.Equal(t, []resetSend{{channel: 0, note: 50}}, sends)
+	})
+}
+
+func countSends(sends []resetSend, target resetSend) int {
+	count := 0
+	for _, s := range sends {
+		if s == target {
+			count++
+		}
+	}
+	return count
 }

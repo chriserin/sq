@@ -86,4 +86,45 @@ func TestProcessConfig(t *testing.T) {
 		ProcessConfig("./testdata/ClockGateResetNoCollision.lua")
 		assert.NoError(t, ValidateClockGateResetOverlap())
 	})
+
+	t.Run("sets reset pool ranges", func(t *testing.T) {
+		ProcessConfig("./testdata/AddResetsRanges.lua")
+		assert.Equal(t, ResetRange{Channel: 1, StartNote: 20, EndNote: 21}, StartResetRange)
+		assert.Equal(t, ResetRange{Channel: 2, StartNote: 30, EndNote: 30}, LoopResetRange)
+	})
+
+	t.Run("rejects a reset range with endnote before startnote", func(t *testing.T) {
+		before := StartResetRange
+		ProcessConfig("./testdata/AddResetsRangeInvalidOrder.lua")
+		// Same swallowed-panic convention as the clock gate subdivision
+		// check above: the entry is never committed.
+		assert.Equal(t, before, StartResetRange)
+	})
+
+	t.Run("allows a reset range spanning more than 8 notes", func(t *testing.T) {
+		ProcessConfig("./testdata/AddResetsRangeWideSpan.lua")
+		assert.Equal(t, ResetRange{Channel: 1, StartNote: 20, EndNote: 40}, StartResetRange)
+	})
+
+	t.Run("rejects a reset range note above 127", func(t *testing.T) {
+		before := StartResetRange
+		ProcessConfig("./testdata/AddResetsRangeNoteTooHigh.lua")
+		assert.Equal(t, before, StartResetRange)
+	})
+
+	t.Run("rejects a reset range note below 0", func(t *testing.T) {
+		before := StartResetRange
+		ProcessConfig("./testdata/AddResetsRangeNoteNegative.lua")
+		assert.Equal(t, before, StartResetRange)
+	})
+
+	t.Run("detects a clock gate and reset range colliding on the same device/channel/note", func(t *testing.T) {
+		ProcessConfig("./testdata/ClockGateResetRangeCollision.lua")
+		err := ValidateClockGateResetOverlap()
+		if assert.Error(t, err) {
+			assert.Contains(t, err.Error(), `"starts"`)
+			assert.Contains(t, err.Error(), "range-collision-test")
+			assert.Contains(t, err.Error(), "channel 1, note 71")
+		}
+	})
 }
