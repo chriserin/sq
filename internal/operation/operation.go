@@ -45,6 +45,7 @@ const (
 	SelectSetupChannel
 	SelectSetupMessageType
 	SelectSetupValue
+	SelectSetupOutput
 	SelectAccentTarget
 	SelectAccentStart
 	SelectAccentEnd

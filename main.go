@@ -16,7 +16,6 @@ const VERSION = "v0.1.0-beta.3"
 type ProgramOptions struct {
 	gridTemplate string
 	instrument   string
-	outport      bool
 	theme        string
 	midiout      string
 }
@@ -92,7 +91,6 @@ func main() {
 	rootCmd.AddCommand(cmdMappings)
 	rootCmd.Flags().StringVar(&cliOptions.gridTemplate, "template", "Drums", "Choose a template (default: Drums)")
 	rootCmd.Flags().StringVar(&cliOptions.instrument, "instrument", "Standard", "Choose an instrument for CC integration (default: Standard)")
-	rootCmd.Flags().BoolVar(&cliOptions.outport, "outport", false, "sq will create an outport to send midi")
 	rootCmd.Flags().StringVar(&cliOptions.theme, "theme", "miles", "Choose an theme for the sequencer visual representation")
 	rootCmd.Flags().StringVar(&cliOptions.midiout, "midiout", "", "Choose a midi out port")
 

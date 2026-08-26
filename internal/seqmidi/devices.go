@@ -17,6 +17,7 @@ type OutDeviceInfo struct {
 	IsDaw       bool
 	IsClockGate bool
 	IsReset     bool
+	IsVirtual   bool // true only for the sq-managed virtual out
 	Out         drivers.Out
 	Name        string
 	Type        string
@@ -83,7 +84,7 @@ func (mc *MidiConnection) ListenToTransmitter(recFunc ReceiverFunc) error {
 }
 
 func (mc *MidiConnection) UpdateOutDeviceList(driver drivers.Driver) error {
-	var newDevices []*OutDeviceInfo
+	newDevices := make(map[string]*OutDeviceInfo)
 
 	outs, err := driver.Outs()
 	if err != nil {
@@ -91,53 +92,56 @@ func (mc *MidiConnection) UpdateOutDeviceList(driver drivers.Driver) error {
 	}
 
 	for _, out := range outs {
-		// Check if we already have this device
-		var foundDevice *OutDeviceInfo
-		for _, currentDevice := range mc.outDevices {
-			if currentDevice.Name == out.String() {
-				foundDevice = currentDevice
-				foundDevice.Out = out
-				foundDevice.IsOpen = false
-				if mc.outportName != "" && foundDevice.Matches(mc.outportName) {
-					foundDevice.Open()
-					if config.ClockGateDeviceName != "" && foundDevice.Matches(config.ClockGateDeviceName) {
-						foundDevice.IsClockGate = true
-					}
-					if config.ResetDeviceName != "" && foundDevice.Matches(config.ResetDeviceName) {
-						foundDevice.IsReset = true
-					}
-				} else if foundDevice.IsDaw {
-					foundDevice.Open()
+		name := out.String()
+		if name == "" {
+			// "" is LineDefinition.MidiOutput's pre-backfill zero value —
+			// never let a real device claim it, however unlikely that is in
+			// practice.
+			continue
+		}
+		if existing, ok := mc.outDevices[name]; ok {
+			existing.Out = out
+			existing.IsOpen = false
+			if mc.outportName != "" && existing.Matches(mc.outportName) {
+				existing.Open()
+				if config.ClockGateDeviceName != "" && existing.Matches(config.ClockGateDeviceName) {
+					existing.IsClockGate = true
 				}
-				break
+				if config.ResetDeviceName != "" && existing.Matches(config.ResetDeviceName) {
+					existing.IsReset = true
+				}
+			} else if existing.IsDaw {
+				existing.Open()
 			}
+			newDevices[name] = existing
+			continue
 		}
 
-		if foundDevice == nil {
-			newDevice := &OutDeviceInfo{
-				Out:  out,
-				Name: out.String(),
+		newDevice := &OutDeviceInfo{Out: out, Name: name}
+		if mc.outportName != "" && newDevice.Matches(mc.outportName) {
+			newDevice.Open()
+			newDevice.Selected = true
+			if config.ClockGateDeviceName != "" && newDevice.Matches(config.ClockGateDeviceName) {
+				newDevice.IsClockGate = true
 			}
-			if mc.outportName != "" && newDevice.Matches(mc.outportName) {
-				newDevice.Open()
-				newDevice.Selected = true
-				if config.ClockGateDeviceName != "" && newDevice.Matches(config.ClockGateDeviceName) {
-					newDevice.IsClockGate = true
-				}
-				if config.ResetDeviceName != "" && newDevice.Matches(config.ResetDeviceName) {
-					newDevice.IsReset = true
-				}
+			if config.ResetDeviceName != "" && newDevice.Matches(config.ResetDeviceName) {
+				newDevice.IsReset = true
 			}
-			for _, dawName := range dawOutports {
-				if strings.Contains(newDevice.Name, dawName) {
-					newDevice.Open()
-					newDevice.IsDaw = true
-				}
-			}
-			newDevices = append(newDevices, newDevice)
-		} else {
-			newDevices = append(newDevices, foundDevice)
 		}
+		for _, dawName := range dawOutports {
+			if strings.Contains(newDevice.Name, dawName) {
+				newDevice.Open()
+				newDevice.IsDaw = true
+			}
+		}
+		newDevices[name] = newDevice
+	}
+
+	if mc.virtualOutDevice != nil {
+		if mc.outportName != "" && mc.virtualOutDevice.Matches(mc.outportName) {
+			mc.virtualOutDevice.Selected = true
+		}
+		newDevices[mc.virtualOutDevice.Name] = mc.virtualOutDevice
 	}
 
 	mc.outDevices = newDevices

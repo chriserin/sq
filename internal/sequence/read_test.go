@@ -278,6 +278,46 @@ func TestReadWrite(t *testing.T) {
 	})
 }
 
+func TestReadWrite_MidiOutput(t *testing.T) {
+	tempDir := t.TempDir()
+
+	t.Run("round-trips a per-line MidiOutput through write and read", func(t *testing.T) {
+		sequence := Sequence{
+			Parts: &[]arrangement.Part{{Name: "TestPart", Beats: 8}},
+			Lines: []grid.LineDefinition{
+				{Channel: 1, Note: 60, MsgType: grid.MessageTypeNote, MidiOutput: "IAC Driver Bus 1"},
+				{Channel: 2, Note: 67, MsgType: grid.MessageTypeCc, MidiOutput: "sq-cli-out"},
+			},
+		}
+
+		filename := filepath.Join(tempDir, "midioutput.txt")
+		assert.NoError(t, Write(sequence, filename))
+
+		content, err := os.ReadFile(filename)
+		assert.NoError(t, err)
+		assert.Contains(t, string(content), "MidiOutput=IAC Driver Bus 1")
+		assert.Contains(t, string(content), "MidiOutput=sq-cli-out")
+
+		readDef, err := Read(filename)
+		assert.NoError(t, err)
+		assert.Len(t, readDef.Lines, 2)
+		assert.Equal(t, "IAC Driver Bus 1", readDef.Lines[0].MidiOutput)
+		assert.Equal(t, "sq-cli-out", readDef.Lines[1].MidiOutput)
+	})
+
+	t.Run("a legacy file with no MidiOutput field reads back as the zero value", func(t *testing.T) {
+		filename := filepath.Join(tempDir, "legacy.txt")
+		legacyContent := "------------------------- LINES -------------------------\n" +
+			"Line 0: Channel=1, Note=60, MessageType=0, Name=\n\n"
+		assert.NoError(t, os.WriteFile(filename, []byte(legacyContent), 0o644))
+
+		readDef, err := Read(filename)
+		assert.NoError(t, err)
+		assert.Len(t, readDef.Lines, 1)
+		assert.Equal(t, "", readDef.Lines[0].MidiOutput, "legacy lines without MidiOutput should parse to \"\", to be backfilled by InitModel")
+	})
+}
+
 func TestReadFileWithChords(t *testing.T) {
 	// Test reading the checkchord.sq file which contains chord definitions
 	readDef, err := Read("testdata/checkchord.sq")

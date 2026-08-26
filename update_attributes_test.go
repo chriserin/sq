@@ -390,13 +390,13 @@ func TestSetupInputSwitchMessageTypeBackToGrid(t *testing.T) {
 	}{
 		{
 			name:                "Message Type Increase from Note to Program Change and back to Grid",
-			commands:            []any{mappings.SetupInputSwitch, mappings.SetupInputSwitch, mappings.Increase, mappings.Increase, mappings.SetupInputSwitch},
+			commands:            []any{mappings.SetupInputSwitch, mappings.SetupInputSwitch, mappings.Increase, mappings.Increase, mappings.SetupInputSwitch, mappings.SetupInputSwitch},
 			expectedMessageType: grid.MessageTypeProgramChange,
 			description:         "Two setup input switches should select message type and increase should increment it",
 		},
 		{
 			name:                "Message Type Increase from Note to Cc and back to Grid",
-			commands:            []any{mappings.SetupInputSwitch, mappings.SetupInputSwitch, mappings.Increase, mappings.SetupInputSwitch, mappings.SetupInputSwitch},
+			commands:            []any{mappings.SetupInputSwitch, mappings.SetupInputSwitch, mappings.Increase, mappings.SetupInputSwitch, mappings.SetupInputSwitch, mappings.SetupInputSwitch},
 			expectedMessageType: grid.MessageTypeCc,
 			description:         "Two setup input switches should select message type and increase should increment it",
 		},

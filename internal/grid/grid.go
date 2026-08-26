@@ -195,10 +195,11 @@ const (
 )
 
 type LineDefinition struct {
-	Channel uint8
-	Note    uint8
-	MsgType MessageType
-	Name    string
+	Channel    uint8
+	Note       uint8
+	MsgType    MessageType
+	Name       string
+	MidiOutput string
 }
 
 func (l *LineDefinition) IncrementChannel() {

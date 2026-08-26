@@ -84,8 +84,8 @@ func writeLineSequences(w io.Writer, lines []grid.LineDefinition) error {
 
 	fmt.Fprintln(w, "------------------------- LINES -------------------------")
 	for i, line := range lines {
-		fmt.Fprintf(w, "Line %d: Channel=%d, Note=%d, MessageType=%d, Name=%s\n",
-			i, line.Channel, line.Note, line.MsgType, line.Name)
+		fmt.Fprintf(w, "Line %d: Channel=%d, Note=%d, MessageType=%d, Name=%s, MidiOutput=%s\n",
+			i, line.Channel, line.Note, line.MsgType, line.Name, line.MidiOutput)
 	}
 	fmt.Fprintln(w, "")
 

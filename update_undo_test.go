@@ -727,6 +727,7 @@ func TestUndoSetupInputSwitch(t *testing.T) {
 				mappings.Increase,
 				mappings.Increase,
 				mappings.SetupInputSwitch,
+				mappings.SetupInputSwitch,
 				mappings.Undo,
 			},
 			expectedChannel: 10,

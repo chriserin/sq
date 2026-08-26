@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,17 +24,17 @@ import (
 const TransmitterName string = "sq-transmitter"
 
 type MidiConnection struct {
-	IsTransmitter bool
-	DoNotListen   bool
-	outportName   string
-	seqOutport    drivers.Out
-	midiChannel   chan Message
-	outDevices    []*OutDeviceInfo
-	inDevices     []*InDeviceInfo
-	TestQueue     *[]Message
-	Test          bool
-	StopFn        func()
-	ReceiverFunc  ReceiverFunc
+	IsTransmitter    bool
+	DoNotListen      bool
+	outportName      string
+	midiChannel      chan Message
+	outDevices       map[string]*OutDeviceInfo
+	virtualOutDevice *OutDeviceInfo
+	inDevices        []*InDeviceInfo
+	TestQueue        *[]Message
+	Test             bool
+	StopFn           func()
+	ReceiverFunc     ReceiverFunc
 }
 
 func (mc *MidiConnection) HasTransmitter() bool {
@@ -52,21 +53,47 @@ func (mc *MidiConnection) StopReceivingFromTransmitter() {
 	}
 }
 
-func (mc *MidiConnection) HasOutport() bool {
-	return mc.seqOutport != nil
-}
-
 func (mc *MidiConnection) HasDevices() bool {
 	return len(mc.outDevices) > 0
 }
 
 func (mc *MidiConnection) EnsureConnection() {
-	if !mc.HasConnection() {
-		if len(mc.outDevices) > 0 {
-			mc.outDevices[0].Open()
-			mc.outDevices[0].Selected = true
+	if mc.HasConnection() {
+		return
+	}
+	for _, device := range mc.outDevices {
+		if !device.IsVirtual {
+			device.Open()
+			device.Selected = true
+			return
 		}
 	}
+	if mc.virtualOutDevice != nil {
+		mc.virtualOutDevice.Selected = true
+	}
+}
+
+func (mc *MidiConnection) DefaultOutputName() string {
+	for _, device := range mc.outDevices {
+		if device.Selected && device.IsOpen {
+			return device.Name
+		}
+	}
+	return ""
+}
+
+func (mc *MidiConnection) OutDeviceNames() []string {
+	names := make([]string, 0, len(mc.outDevices))
+	for name := range mc.outDevices {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func (mc *MidiConnection) HasOutDevice(name string) bool {
+	_, ok := mc.outDevices[name]
+	return ok
 }
 
 func (mc *MidiConnection) HasConnection() bool {
@@ -81,19 +108,41 @@ func (mc *MidiConnection) HasConnection() bool {
 }
 
 type Message struct {
-	Delay time.Duration
-	Msg   midi.Message
+	Delay  time.Duration
+	Msg    midi.Message
+	Output string
 }
 
-func InitMidiConnection(createOut bool, outportName string, ctx context.Context) *MidiConnection {
-	var midiConn MidiConnection
-	if createOut {
-		midiConn = MidiConnection{midiChannel: make(chan Message)}
-	} else {
-		midiConn = MidiConnection{outportName: outportName, midiChannel: make(chan Message)}
-	}
+func InitMidiConnection(outportName string, ctx context.Context) *MidiConnection {
+	return &MidiConnection{outportName: outportName, midiChannel: make(chan Message)}
+}
 
-	return &midiConn
+// CreateVirtualOutDevice opens the sq-managed virtual out and registers it as
+// an ordinary outDevices entry. On darwin, OpenVirtualOut synchronizes with
+// DeviceLoop's background goroutine over an unbuffered channel, so this must
+// be called after DeviceLoop(ctx) has started — calling it earlier (e.g. from
+// InitMidiConnection, before DeviceLoop exists) deadlocks with no receiver
+// ever available for that handshake.
+func (mc *MidiConnection) CreateVirtualOutDevice() {
+	out, err := OpenVirtualOut(OutputName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening MIDI output %v: %v\n", OutputName, err)
+		return
+	}
+	mc.virtualOutDevice = &OutDeviceInfo{
+		Out:       out,
+		Name:      out.String(),
+		IsOpen:    true,
+		IsVirtual: true,
+	}
+	if mc.outportName != "" && mc.virtualOutDevice.Matches(mc.outportName) {
+		mc.virtualOutDevice.Selected = true
+	}
+	if mc.outDevices == nil {
+		mc.outDevices = make(map[string]*OutDeviceInfo)
+	}
+	mc.outDevices[mc.virtualOutDevice.Name] = mc.virtualOutDevice
+	mc.EnsureConnection()
 }
 
 var playMutex = sync.Mutex{}
@@ -117,7 +166,7 @@ func (mc *MidiConnection) LoopMidi(ctx context.Context) {
 						notereg.AddKey(key)
 					}
 					playMutex.Lock()
-					err := mc.SendMidi(msg.Msg)
+					err := mc.SendMidi(msg.Msg, msg.Output)
 					playMutex.Unlock()
 					if err != nil {
 						panic(err)
@@ -132,7 +181,7 @@ func (mc *MidiConnection) LoopMidi(ctx context.Context) {
 							notereg.AddKey(key)
 						}
 						playMutex.Lock()
-						err := mc.SendMidi(msg.Msg)
+						err := mc.SendMidi(msg.Msg, msg.Output)
 						playMutex.Unlock()
 						if msg.Msg.Type().Is(midi.NoteOffMsg) {
 
@@ -157,37 +206,37 @@ func (mc *MidiConnection) Send(msg Message) {
 	}
 }
 
-func (mc MidiConnection) SendMidi(msg midi.Message) error {
-	if mc.seqOutport != nil {
-		if mc.seqOutport.IsOpen() {
-			err := mc.seqOutport.Send(msg)
-			if err != nil {
-				return err
+func (mc MidiConnection) SendMidi(msg midi.Message, output string) error {
+	if output != "" {
+		if device, ok := mc.outDevices[output]; ok {
+			device.Open()
+			if device.Out.IsOpen() {
+				return device.Out.Send(msg)
 			}
 		}
-	} else {
-		// Send to all selected devices
-		for _, device := range mc.outDevices {
-			if device.Selected {
-				if device.Out.IsOpen() {
-					err := device.Out.Send(msg)
-					if err != nil {
-						return err
-					}
-				}
-			}
+		return nil // named device not found/disconnected
+	}
+	for _, device := range mc.outDevices {
+		if device.Selected && device.IsOpen {
+			return device.Out.Send(msg)
 		}
 	}
 	return nil
 }
 
 func (mc *MidiConnection) Panic(channels []uint8) error {
-	// NOTE: No connection means nothing to panic about
+	// NOTE: No connection means nothing to panic about. Sends directly to
+	// every open device (not routed through SendMidi) because a stuck note
+	// could be on any device a line has used, not just the default one.
 	for _, channel := range channels {
 		for i := range 127 {
-			err := mc.SendMidi(midi.NoteOff(channel-1, uint8(i)))
-			if err != nil {
-				return fault.Wrap(err, fmsg.With("cannot send panic note off"))
+			msg := midi.NoteOff(channel-1, uint8(i))
+			for _, device := range mc.outDevices {
+				if device.IsOpen {
+					if err := device.Out.Send(msg); err != nil {
+						return fault.Wrap(err, fmsg.With("cannot send panic note off"))
+					}
+				}
 			}
 		}
 	}
@@ -332,12 +381,3 @@ func FindInPort(inPortName string) (drivers.In, error) {
 }
 
 var OutputName string = "sq-cli-out"
-
-func (mc *MidiConnection) CreateOutport() error {
-	outport, err := OpenVirtualOut(OutputName)
-	if err != nil {
-		return fault.Wrap(err, fmsg.With("cannot create virtual outport"))
-	}
-	mc.seqOutport = outport
-	return nil
-}

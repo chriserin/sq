@@ -24,6 +24,17 @@ func namedOut(name string) drivers.Out {
 	return outs[0]
 }
 
+// outDevice looks up a device by its original (pre-"-out") name in a
+// MidiConnection's outDevices map.
+func outDevice(mc *MidiConnection, name string) *OutDeviceInfo {
+	for _, d := range mc.outDevices {
+		if d.Matches(name) {
+			return d
+		}
+	}
+	return nil
+}
+
 func resetClockGateConfig() {
 	config.ClockGateDeviceName = ""
 }
@@ -40,7 +51,7 @@ func TestUpdateOutDeviceList_ClockGateArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.True(t, mc.outDevices[0].IsClockGate)
+		assert.True(t, outDevice(mc, "widget").IsClockGate)
 	})
 
 	t.Run("not armed when only --midiout matches", func(t *testing.T) {
@@ -49,7 +60,7 @@ func TestUpdateOutDeviceList_ClockGateArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.False(t, mc.outDevices[0].IsClockGate)
+		assert.False(t, outDevice(mc, "widget").IsClockGate)
 	})
 
 	t.Run("not armed when only the clock device config matches", func(t *testing.T) {
@@ -59,7 +70,7 @@ func TestUpdateOutDeviceList_ClockGateArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.False(t, mc.outDevices[0].IsClockGate)
+		assert.False(t, outDevice(mc, "widget").IsClockGate)
 	})
 
 	t.Run("not armed when both are empty", func(t *testing.T) {
@@ -68,7 +79,7 @@ func TestUpdateOutDeviceList_ClockGateArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.False(t, mc.outDevices[0].IsClockGate)
+		assert.False(t, outDevice(mc, "widget").IsClockGate)
 	})
 
 	t.Run("not armed when --midiout and clock device name two different devices", func(t *testing.T) {
@@ -90,12 +101,12 @@ func TestUpdateOutDeviceList_ClockGateArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.True(t, mc.outDevices[0].IsClockGate)
+		assert.True(t, outDevice(mc, "widget").IsClockGate)
 
 		// Second scan re-enumerates the same device name, exercising the
 		// "already-known device" branch instead of "new device".
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.True(t, mc.outDevices[0].IsClockGate)
+		assert.True(t, outDevice(mc, "widget").IsClockGate)
 	})
 }
 
@@ -107,7 +118,7 @@ func TestUpdateOutDeviceList_ResetArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.True(t, mc.outDevices[0].IsReset)
+		assert.True(t, outDevice(mc, "widget").IsReset)
 	})
 
 	t.Run("not armed when only --midiout matches", func(t *testing.T) {
@@ -116,7 +127,7 @@ func TestUpdateOutDeviceList_ResetArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.False(t, mc.outDevices[0].IsReset)
+		assert.False(t, outDevice(mc, "widget").IsReset)
 	})
 
 	t.Run("not armed when only the reset device config matches", func(t *testing.T) {
@@ -126,7 +137,7 @@ func TestUpdateOutDeviceList_ResetArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.False(t, mc.outDevices[0].IsReset)
+		assert.False(t, outDevice(mc, "widget").IsReset)
 	})
 
 	t.Run("not armed when both are empty", func(t *testing.T) {
@@ -135,7 +146,7 @@ func TestUpdateOutDeviceList_ResetArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.False(t, mc.outDevices[0].IsReset)
+		assert.False(t, outDevice(mc, "widget").IsReset)
 	})
 
 	t.Run("not armed when --midiout and reset device name two different devices", func(t *testing.T) {
@@ -157,10 +168,10 @@ func TestUpdateOutDeviceList_ResetArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.True(t, mc.outDevices[0].IsReset)
+		assert.True(t, outDevice(mc, "widget").IsReset)
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.True(t, mc.outDevices[0].IsReset)
+		assert.True(t, outDevice(mc, "widget").IsReset)
 	})
 
 	t.Run("clock gate and reset can be armed independently on different devices", func(t *testing.T) {
@@ -172,7 +183,7 @@ func TestUpdateOutDeviceList_ResetArming(t *testing.T) {
 		driver := &fakeDriver{outs: []drivers.Out{namedOut("widget")}}
 
 		assert.NoError(t, mc.UpdateOutDeviceList(driver))
-		assert.True(t, mc.outDevices[0].IsClockGate)
-		assert.False(t, mc.outDevices[0].IsReset)
+		assert.True(t, outDevice(mc, "widget").IsClockGate)
+		assert.False(t, outDevice(mc, "widget").IsReset)
 	})
 }

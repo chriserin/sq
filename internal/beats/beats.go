@@ -376,10 +376,10 @@ func (bl BeatsLooper) PlayBeat(beatInterval time.Duration, pattern grid.Pattern,
 			case grid.MessageTypeCc:
 				ccMessage := CCMessage(line, note, accents.Data, delay, true, definition.Instrument)
 
-				bl.PlayMessage(ccMessage.delay, ccMessage.MidiMessage())
+				bl.PlayMessage(ccMessage.delay, ccMessage.MidiMessage(), ccMessage.output)
 			case grid.MessageTypeProgramChange:
 				pcMessage := PCMessage(line, note, accents.Data, delay, true, definition.Instrument)
-				bl.PlayMessage(pcMessage.delay, pcMessage.MidiMessage())
+				bl.PlayMessage(pcMessage.delay, pcMessage.MidiMessage(), pcMessage.output)
 			}
 		}
 	}
@@ -398,22 +398,22 @@ func (bl BeatsLooper) ProcessRatchets(note grid.Note, beatInterval time.Duration
 	}
 }
 
-func (bl BeatsLooper) PlayMessage(delay time.Duration, message midi.Message) {
-	bl.PlayQueue <- seqmidi.Message{Msg: message, Delay: delay}
+func (bl BeatsLooper) PlayMessage(delay time.Duration, message midi.Message, output string) {
+	bl.PlayQueue <- seqmidi.Message{Msg: message, Delay: delay, Output: output}
 }
 
 func (bl BeatsLooper) PlayOnMessage(nm NoteMsg) {
 	key := notereg.GetKey(nm.GetOnMidi())
 	if notereg.HasKey(key) {
-		bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOffMidi(), Delay: nm.delay}
-		bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOnMidi(), Delay: nm.delay}
+		bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOffMidi(), Delay: nm.delay, Output: nm.output}
+		bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOnMidi(), Delay: nm.delay, Output: nm.output}
 	} else {
-		bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOnMidi(), Delay: nm.delay}
+		bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOnMidi(), Delay: nm.delay, Output: nm.output}
 	}
 }
 
 func (bl BeatsLooper) PlayOffMessage(nm NoteMsg) {
-	bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOffMidi(), Delay: nm.delay}
+	bl.PlayQueue <- seqmidi.Message{Msg: nm.GetOffMidi(), Delay: nm.delay, Output: nm.output}
 }
 
 type BeatMsg struct {
@@ -436,17 +436,17 @@ func NoteMessages(l grid.LineDefinition, accentValue uint8, gateLength time.Dura
 	}
 
 	id := rand.Int()
-	onMsg := NoteMsg{id: id, midiType: midi.NoteOnMsg, channel: l.Channel - 1, noteValue: noteValue, velocity: velocityValue, delay: delay}
-	offMsg := NoteMsg{id: id, midiType: midi.NoteOffMsg, channel: l.Channel - 1, noteValue: noteValue, velocity: 0, delay: delay + gateLength}
+	onMsg := NoteMsg{id: id, midiType: midi.NoteOnMsg, channel: l.Channel - 1, noteValue: noteValue, velocity: velocityValue, delay: delay, output: l.MidiOutput}
+	offMsg := NoteMsg{id: id, midiType: midi.NoteOffMsg, channel: l.Channel - 1, noteValue: noteValue, velocity: 0, delay: delay + gateLength, output: l.MidiOutput}
 
 	return onMsg, offMsg
 }
 
 func CCMessage(l grid.LineDefinition, note grid.Note, accents []config.Accent, delay time.Duration, includeDelay bool, instrument string) controlChangeMsg {
 	if note.Action == grid.ActionSpecificValue {
-		return controlChangeMsg{l.Channel - 1, l.Note, note.AccentIndex, delay}
+		return controlChangeMsg{l.Channel - 1, l.Note, note.AccentIndex, delay, l.MidiOutput}
 	} else {
-		cc, _ := config.FindCC(l.Note, instrument)
+		cc, _ := config.FindCCForOutput(l.Note, l.MidiOutput, instrument)
 		var ccValue uint8
 		if cc.UpperLimit == 1 && note.AccentIndex > 4 {
 			ccValue = 0
@@ -456,16 +456,16 @@ func CCMessage(l grid.LineDefinition, note grid.Note, accents []config.Accent, d
 			ccValue = uint8((float32((len(accents))-int(note.AccentIndex)) / float32(len(accents)-1)) * float32(cc.UpperLimit))
 		}
 
-		return controlChangeMsg{l.Channel - 1, l.Note, ccValue, delay}
+		return controlChangeMsg{l.Channel - 1, l.Note, ccValue, delay, l.MidiOutput}
 	}
 }
 
 func PCMessage(l grid.LineDefinition, note grid.Note, accents []config.Accent, delay time.Duration, includeDelay bool, instrument string) programChangeMsg {
 	if note.Action == grid.ActionSpecificValue {
-		return programChangeMsg{l.Channel - 1, note.AccentIndex, delay}
+		return programChangeMsg{l.Channel - 1, note.AccentIndex, delay, l.MidiOutput}
 	} else {
 		pcValue := uint8((float32((len(accents))-int(note.AccentIndex)) / float32(len(accents)-1)) * float32(127))
-		return programChangeMsg{l.Channel - 1, pcValue, delay}
+		return programChangeMsg{l.Channel - 1, pcValue, delay, l.MidiOutput}
 	}
 }
 
@@ -480,6 +480,7 @@ type NoteMsg struct {
 	midiType  midi.Type
 	delay     time.Duration
 	id        int
+	output    string
 }
 
 func (nm NoteMsg) Delay() time.Duration {
@@ -490,6 +491,7 @@ type programChangeMsg struct {
 	channel uint8
 	pcValue uint8
 	delay   time.Duration
+	output  string
 }
 
 func (pcm programChangeMsg) MidiMessage() midi.Message {
@@ -505,6 +507,7 @@ type controlChangeMsg struct {
 	control uint8
 	ccValue uint8
 	delay   time.Duration
+	output  string
 }
 
 func (ccm controlChangeMsg) MidiMessage() midi.Message {

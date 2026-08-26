@@ -28,6 +28,19 @@ func TestProcessConfig(t *testing.T) {
 		assert.Equal(t, "GLIDE RATE", instrument.CCs[11].Name)
 		assert.Equal(t, uint8(26), instrument.CCs[11].Value)
 		assert.Equal(t, uint8(120), instrument.CCs[11].UpperLimit)
+		assert.Equal(t, "", instrument.Output, "instruments with no output field should not be tagged to any device")
+	})
+
+	t.Run("adds instruments tagged to a specific output device", func(t *testing.T) {
+		ProcessConfig("./testdata/CCPerOutput.lua")
+		instrument, ok := GetInstrumentForOutput("cc-test-device")
+		assert.True(t, ok)
+		assert.Equal(t, "Device Specific For CC Test", instrument.Name)
+		assert.Equal(t, "cc-test-device", instrument.Output)
+		assert.Equal(t, 2, len(instrument.CCs))
+
+		_, ok = GetInstrumentForOutput("some-other-device")
+		assert.False(t, ok, "a device with no tagged instrument should not match")
 	})
 
 	t.Run("sets clock gates", func(t *testing.T) {
@@ -126,5 +139,54 @@ func TestProcessConfig(t *testing.T) {
 			assert.Contains(t, err.Error(), "range-collision-test")
 			assert.Contains(t, err.Error(), "channel 1, note 71")
 		}
+	})
+}
+
+func TestFindCCForOutput(t *testing.T) {
+	ProcessConfig("./testdata/CCPerOutput.lua")
+
+	t.Run("uses the output-specific instrument's CCs when the output has one tagged", func(t *testing.T) {
+		cc, ok := FindCCForOutput(10, "cc-test-device", "Fallback Instrument For CC Test")
+		assert.True(t, ok)
+		assert.Equal(t, "Device Pan", cc.Name)
+	})
+
+	t.Run("does not fall back to the named instrument once the output has its own CC set", func(t *testing.T) {
+		// CC 1 only exists on the fallback instrument, not on the device-specific one.
+		_, ok := FindCCForOutput(1, "cc-test-device", "Fallback Instrument For CC Test")
+		assert.False(t, ok)
+	})
+
+	t.Run("falls back to the named instrument when the output has no tagged CC set", func(t *testing.T) {
+		cc, ok := FindCCForOutput(1, "unknown-output", "Fallback Instrument For CC Test")
+		assert.True(t, ok)
+		assert.Equal(t, "Fallback Mod", cc.Name)
+	})
+
+	t.Run("falls back to StandardCCs when neither the output nor the named instrument match", func(t *testing.T) {
+		cc, ok := FindCCForOutput(1, "unknown-output", "unknown-instrument")
+		assert.True(t, ok)
+		assert.Equal(t, "Modulation Wheel or Lever", cc.Name)
+	})
+}
+
+func TestNearestCCForOutput(t *testing.T) {
+	ProcessConfig("./testdata/CCPerOutput.lua")
+
+	t.Run("returns the exact match when present", func(t *testing.T) {
+		cc, ok := NearestCCForOutput(10, "cc-test-device", "Fallback Instrument For CC Test")
+		assert.True(t, ok)
+		assert.Equal(t, uint8(10), cc.Value)
+	})
+
+	t.Run("returns the closest value when the exact one is absent", func(t *testing.T) {
+		// device-specific CCs are at 10 and 20.
+		cc, ok := NearestCCForOutput(13, "cc-test-device", "Fallback Instrument For CC Test")
+		assert.True(t, ok)
+		assert.Equal(t, uint8(10), cc.Value, "13 is closer to 10 than to 20")
+
+		cc, ok = NearestCCForOutput(17, "cc-test-device", "Fallback Instrument For CC Test")
+		assert.True(t, ok)
+		assert.Equal(t, uint8(20), cc.Value, "17 is closer to 20 than to 10")
 	})
 }

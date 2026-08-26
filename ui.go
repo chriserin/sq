@@ -552,24 +552,71 @@ func (m *model) EnsureRatchetCursorVisible() {
 }
 
 func (m *model) IncrementCC() {
-	note := m.definition.Lines[m.gridCursor.Line].Note
-	for i := note + 1; i <= 127; i++ {
-		_, exists := config.FindCC(i, m.definition.Instrument)
+	line := &m.definition.Lines[m.gridCursor.Line]
+	for i := line.Note + 1; i <= 127; i++ {
+		_, exists := config.FindCCForOutput(i, line.MidiOutput, m.definition.Instrument)
 		if exists {
-			m.definition.Lines[m.gridCursor.Line].Note = i
+			line.Note = i
 			return
 		}
 	}
 }
 
 func (m *model) DecrementCC() {
-	note := m.definition.Lines[m.gridCursor.Line].Note
-	for i := note - 1; i != 255; i-- {
-		_, exists := config.FindCC(i, m.definition.Instrument)
+	line := &m.definition.Lines[m.gridCursor.Line]
+	for i := line.Note - 1; i != 255; i-- {
+		_, exists := config.FindCCForOutput(i, line.MidiOutput, m.definition.Instrument)
 		if exists {
-			m.definition.Lines[m.gridCursor.Line].Note = i
+			line.Note = i
 			return
 		}
+	}
+}
+
+func (m *model) IncrementLineOutput() {
+	line := &m.definition.Lines[m.gridCursor.Line]
+	names := m.midiConnection.OutDeviceNames()
+	if len(names) == 0 {
+		// No devices at all (e.g. virtual port creation itself failed) —
+		// nothing to cycle to.
+		return
+	}
+	idx := slices.Index(names, line.MidiOutput)
+	if idx < 0 {
+		// Current value isn't a live device (e.g. it disconnected) — land on
+		// the first available device rather than computing a wraparound
+		// offset from a position that no longer exists in the list.
+		line.MidiOutput = names[0]
+	} else {
+		line.MidiOutput = names[(idx+1)%len(names)]
+	}
+	m.snapLineCCToNearest(line)
+}
+
+func (m *model) DecrementLineOutput() {
+	line := &m.definition.Lines[m.gridCursor.Line]
+	names := m.midiConnection.OutDeviceNames()
+	if len(names) == 0 {
+		return
+	}
+	idx := slices.Index(names, line.MidiOutput)
+	if idx < 0 {
+		line.MidiOutput = names[0]
+	} else {
+		line.MidiOutput = names[(idx-1+len(names))%len(names)]
+	}
+	m.snapLineCCToNearest(line)
+}
+
+func (m *model) snapLineCCToNearest(line *grid.LineDefinition) {
+	if line.MsgType != grid.MessageTypeCc {
+		return
+	}
+	if _, exists := config.FindCCForOutput(line.Note, line.MidiOutput, m.definition.Instrument); exists {
+		return
+	}
+	if nearest, ok := config.NearestCCForOutput(line.Note, line.MidiOutput, m.definition.Instrument); ok {
+		line.Note = nearest.Value
 	}
 }
 
@@ -770,6 +817,12 @@ func InitModel(filename string, midiConnection *seqmidi.MidiConnection, options 
 
 	logFile, logFileErr := tea.LogToFile("debug.log", "debug")
 	definition, err := LoadFile(filename, options.gridTemplate, options.instrument)
+	defaultOutput := midiConnection.DefaultOutputName()
+	for i := range definition.Lines {
+		if definition.Lines[i].MidiOutput == "" {
+			definition.Lines[i].MidiOutput = defaultOutput
+		}
+	}
 	if err == nil {
 		// No capacity for multiple errors currently
 		err = logFileErr
@@ -867,18 +920,26 @@ func RunProgram(filename string, options ProgramOptions) (*tea.Program, error) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 
-	midiConnection := seqmidi.InitMidiConnection(options.outport, options.midiout, ctx)
+	midiConnection := seqmidi.InitMidiConnection(options.midiout, ctx)
 	config.Init()
 	if err := config.ValidateClockGateResetOverlap(); err != nil {
 		cancel()
 		return nil, err
 	}
 	themes.ChooseTheme(options.theme)
+	// NOTE: DeviceLoop blocks until the first device scan resolves (on both
+	// darwin and linux), so it must run before InitModel builds any
+	// LineDefinitions — new/loaded lines are assigned the app's resolved
+	// default output, which requires that default to already be known.
+	midiConnection.DeviceLoop(ctx)
+	// CreateVirtualOutDevice must run after DeviceLoop has started: on darwin
+	// it opens the virtual port via a handshake with DeviceLoop's background
+	// goroutine, which doesn't exist yet if called any earlier.
+	midiConnection.CreateVirtualOutDevice()
 	model := InitModel(filename, midiConnection, options, cancel)
 	model.ResetIterations()
 	beatsLooper = beats.InitBeatsLooper()
 	updateChannel = beatsLooper.UpdateChannel
-	midiConnection.DeviceLoop(ctx)
 
 	if model.midiConnection.HasTransmitter() {
 		model.midiLoopMode = timing.MlmReceiver
@@ -890,12 +951,6 @@ func RunProgram(filename string, options ProgramOptions) (*tea.Program, error) {
 	SetupTimingLoop(model, beatsLooper, program.Send, ctx)
 	beatsLooper.Loop(program.Send, midiConnection, ctx)
 	midiConnection.LoopMidi(ctx)
-	if options.outport {
-		err := midiConnection.CreateOutport()
-		if err != nil {
-			return nil, err
-		}
-	}
 	return program, nil
 }
 
@@ -1173,13 +1228,13 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 		case mappings.HoldingKeys:
 			return m, nil
 		case mappings.CursorDown:
-			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSpecificValue}, m.selectionIndicator) {
+			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSetupOutput, operation.SelectSpecificValue}, m.selectionIndicator) {
 				m.CursorDown()
 				m.UnsetActiveChord()
 				m.SetVisualArea()
 			}
 		case mappings.CursorUp:
-			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSpecificValue}, m.selectionIndicator) {
+			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSetupOutput, operation.SelectSpecificValue}, m.selectionIndicator) {
 				m.CursorUp()
 				m.UnsetActiveChord()
 				m.SetVisualArea()
@@ -1348,9 +1403,9 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 		case mappings.SetupInputSwitch:
 			var states []operation.Selection
 			if m.definition.Lines[m.gridCursor.Line].MsgType == grid.MessageTypeProgramChange {
-				states = []operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType}
+				states = []operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupOutput}
 			} else {
-				states = []operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue}
+				states = []operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSetupOutput}
 			}
 			if m.selectionIndicator == states[0] {
 				m.CaptureTemporaryState()
@@ -1430,6 +1485,8 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 				case grid.MessageTypeCc:
 					m.IncrementCC()
 				}
+			case operation.SelectSetupOutput:
+				m.IncrementLineOutput()
 			case operation.SelectRatchetSpan:
 				m.IncreaseSpan()
 			case operation.SelectAccentEnd:
@@ -1479,6 +1536,8 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 				case grid.MessageTypeCc:
 					m.DecrementCC()
 				}
+			case operation.SelectSetupOutput:
+				m.DecrementLineOutput()
 			case operation.SelectRatchetSpan:
 				m.DecreaseSpan()
 			case operation.SelectAccentEnd:
@@ -1605,8 +1664,9 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 				}
 
 				m.definition.Lines = append(m.definition.Lines, grid.LineDefinition{
-					Channel: lastLine.Channel,
-					Note:    uint8(int8(lastLine.Note) + difference),
+					Channel:    lastLine.Channel,
+					Note:       uint8(int8(lastLine.Note) + difference),
+					MidiOutput: m.midiConnection.DefaultOutputName(),
 				})
 				m.playState.LineStates = playstate.InitLineStates(len(m.definition.Lines), m.playState.LineStates, 0)
 			}
@@ -1850,10 +1910,11 @@ func (m *model) CaptureTemporaryState() {
 	linesCopy := make([]grid.LineDefinition, len(m.definition.Lines))
 	for i, defLine := range m.definition.Lines {
 		newLine := grid.LineDefinition{
-			Channel: defLine.Channel,
-			Note:    defLine.Note,
-			MsgType: defLine.MsgType,
-			Name:    defLine.Name,
+			Channel:    defLine.Channel,
+			Note:       defLine.Note,
+			MsgType:    defLine.MsgType,
+			Name:       defLine.Name,
+			MidiOutput: defLine.MidiOutput,
 		}
 		linesCopy[i] = newLine
 	}
@@ -1988,16 +2049,7 @@ func (m *model) ResetIterations() {
 }
 
 func (m *model) Start(delay time.Duration) {
-	if m.midiConnection.HasOutport() {
-		// DO NOTHING
-	} else if m.midiConnection.HasDevices() {
-		m.midiConnection.EnsureConnection()
-	} else {
-		m.SetCurrentError(fault.New("cannot open midi connection", fmsg.WithDesc("No MIDI devices found", "Please ensure a MIDI device is connected")))
-		m.playState.Playing = false
-		m.playState.PlayMode = playstate.PlayStandard
-		return
-	}
+	m.midiConnection.EnsureConnection()
 
 	m.ResetIterations()
 	m.arrangement.ResetDepth()
@@ -2059,7 +2111,7 @@ func (m *model) Stop() {
 
 	notes := notereg.Clear()
 	for _, n := range notes {
-		beatsLooper.PlayMessage(time.Duration(0), n)
+		beatsLooper.PlayMessage(time.Duration(0), n, "")
 	}
 }
 

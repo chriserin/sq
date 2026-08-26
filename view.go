@@ -66,7 +66,7 @@ func (m model) View() (output tea.View) {
 	if m.patternMode == operation.PatternAccent || m.IsAccentSelector() {
 		sideView = m.AccentKeyView()
 	} else if (m.CurrentPart().Overlays.Key == overlaykey.ROOT && m.CurrentPart().Overlays.IsFresh() && len(*m.definition.Parts) == 1 && m.CurrentPartID() == 0) ||
-		slices.Contains([]operation.Selection{operation.SelectSetupValue, operation.SelectSetupMessageType, operation.SelectSetupChannel}, m.selectionIndicator) {
+		slices.Contains([]operation.Selection{operation.SelectSetupValue, operation.SelectSetupMessageType, operation.SelectSetupChannel, operation.SelectSetupOutput}, m.selectionIndicator) {
 		// NOTE: We want to show the setupView on the very initial screen,
 		// before any sequencing has begun OR a setup value is selected
 		sideView = m.SetupView(showLines)
@@ -299,6 +299,8 @@ func (m model) SetupView(showLines []uint8) string {
 	buf.WriteString("\n")
 	buf.WriteString(themes.SeqBorderStyle.Render("──────────────"))
 	buf.WriteString("\n")
+	outputPage := m.selectionIndicator == operation.SelectSetupOutput
+
 	for i, line := range m.definition.Lines {
 		if m.hideEmptyLines && !slices.Contains(showLines, uint8(i)) {
 			continue
@@ -309,6 +311,22 @@ func (m model) SetupView(showLines []uint8) string {
 			buf.WriteString(themes.SelectedStyle.Render(fmt.Sprintf("%2d", line.Channel)))
 		} else {
 			buf.WriteString(themes.NumberStyle.Render(fmt.Sprintf("%2d", line.Channel)))
+		}
+
+		if outputPage {
+			outputName := line.MidiOutput
+			if outputName == "" {
+				// Shouldn't occur post-backfill — defensive display only.
+				outputName = "(unset)"
+			} else if !m.midiConnection.HasOutDevice(outputName) {
+				outputName = outputName + " (missing)"
+			}
+			if uint8(i) == m.gridCursor.Line {
+				buf.WriteString(fmt.Sprintf(" %s\n", themes.SelectedStyle.Render(outputName)))
+			} else {
+				buf.WriteString(fmt.Sprintf(" %s\n", themes.NumberStyle.Render(outputName)))
+			}
+			continue
 		}
 
 		var messageType string
@@ -352,7 +370,7 @@ func LineValueName(ld grid.LineDefinition, instrument string) string {
 	case grid.MessageTypeNote:
 		return NoteName(ld.Note)
 	case grid.MessageTypeCc:
-		cc, _ := config.FindCC(ld.Note, instrument)
+		cc, _ := config.FindCCForOutput(ld.Note, ld.MidiOutput, instrument)
 		return cc.Name
 	}
 	return ""

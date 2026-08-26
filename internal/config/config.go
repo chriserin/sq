@@ -149,6 +149,57 @@ func FindCC(value uint8, instrumentName string) (ControlChange, bool) {
 	return ControlChange{}, false
 }
 
+func GetInstrumentForOutput(outputName string) (Instrument, bool) {
+	for _, instrument := range instruments {
+		if instrument.Output != "" && instrument.Output == outputName {
+			return instrument, true
+		}
+	}
+	return Instrument{}, false
+}
+
+func CCsForOutput(outputName string, fallbackInstrument string) []ControlChange {
+	if inst, ok := GetInstrumentForOutput(outputName); ok {
+		return inst.CCs
+	}
+	instrument := GetInstrument(fallbackInstrument)
+	if len(instrument.CCs) > 0 {
+		return instrument.CCs
+	}
+	return StandardCCs
+}
+
+func FindCCForOutput(value uint8, outputName string, fallbackInstrument string) (ControlChange, bool) {
+	for _, cc := range CCsForOutput(outputName, fallbackInstrument) {
+		if cc.Value == value {
+			return cc, true
+		}
+	}
+	return ControlChange{}, false
+}
+
+func NearestCCForOutput(value uint8, outputName string, fallbackInstrument string) (ControlChange, bool) {
+	ccs := CCsForOutput(outputName, fallbackInstrument)
+	if len(ccs) == 0 {
+		return ControlChange{}, false
+	}
+	best := ccs[0]
+	bestDiff := absDiff(value, best.Value)
+	for _, cc := range ccs[1:] {
+		if diff := absDiff(value, cc.Value); diff < bestDiff {
+			best, bestDiff = cc, diff
+		}
+	}
+	return best, true
+}
+
+func absDiff(a, b uint8) uint8 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
 type Template struct {
 	Name          string
 	Lines         []grid.LineDefinition
@@ -230,8 +281,9 @@ func GetDefaultTemplate() Template {
 }
 
 type Instrument struct {
-	Name string
-	CCs  []ControlChange
+	Name   string
+	Output string // optional; if set, this CC set applies to lines whose MidiOutput matches this name instead of the sequence-wide Instrument
+	CCs    []ControlChange
 }
 
 var instruments []Instrument
@@ -344,9 +396,12 @@ func addInstrument(L *lua.State) int {
 	if L.IsTable(1) {
 		L.GetField(1, "name")
 		name := L.ToString(2)
-		instrument := Instrument{Name: name}
-
 		L.Pop(1)
+		L.GetField(1, "output")
+		output := L.ToString(2)
+		L.Pop(1)
+		instrument := Instrument{Name: name, Output: output}
+
 		L.GetField(1, "controlchanges")
 		if L.IsTable(2) {
 
@@ -421,7 +476,7 @@ func addTemplate(L *lua.State) int {
 				L.GetTable(2)
 				if L.IsTable(3) {
 					ld := grid.LineDefinition{}
-					for i := range 4 {
+					for i := range 5 {
 						L.PushInteger(int64(i + 1))
 						L.GetTable(3)
 						switch i + 1 {
@@ -444,6 +499,8 @@ func addTemplate(L *lua.State) int {
 						case 4:
 							name := L.ToString(4)
 							ld.Name = name
+						case 5:
+							ld.MidiOutput = L.ToString(4)
 						}
 						L.Pop(1)
 					}

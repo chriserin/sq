@@ -249,6 +249,8 @@ func Scan(scanner *bufio.Scanner, sequence Sequence) Sequence {
 					}
 				case "Name":
 					lineDef.Name = value
+				case "MidiOutput":
+					lineDef.MidiOutput = value
 				}
 			}
 
