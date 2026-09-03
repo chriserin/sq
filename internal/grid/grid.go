@@ -22,6 +22,7 @@ const (
 	ActionLineBounceAll
 	ActionLineDelay
 	ActionSpecificValue
+	ActionTempoChange
 )
 
 func GK(line uint8, beat uint8) GridKey {

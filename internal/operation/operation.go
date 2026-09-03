@@ -65,6 +65,7 @@ const (
 	SelectRatchets
 	SelectRatchetSpan
 	SelectSpecificValue
+	SelectTempoChangeValue
 	SelectEuclideanHits
 
 	// Program Level Operation
@@ -103,6 +104,7 @@ var NumberSelections = []Selection{
 	SelectStartBeats,
 	SelectStartCycles,
 	SelectSpecificValue,
+	SelectTempoChangeValue,
 	SelectTempo,
 	SelectTempoSubdivision,
 	SelectSetupChannel,

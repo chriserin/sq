@@ -121,6 +121,7 @@ const (
 	ActionAddLineBounceAll
 	ActionAddLineDelay
 	ActionAddSpecificValue
+	ActionAddTempoChange
 	SelectKeyLine
 	OverlayStackToggle
 	NumberPattern
@@ -283,7 +284,8 @@ var CommandDescriptions = map[Command]string{
 	ActionAddLineBounce:    "Add line bounce action to current line. When the playback cursor reaches this action it will reverse direction, and reverse again when reaching the line beginning creating a bouncing effect",
 	ActionAddLineBounceAll: "Add line bounce all action to current line. When the playback cursor reaches this action all playback cursors will reverse direction, and reverse again when reaching the line beginning creating a bouncing effect",
 	ActionAddLineDelay:     "Add line delay action to current line",
-	ActionAddSpecificValue: "Add specific value note to the grid. When cursor is above this note, +/- will affect the specific value of the note",
+	ActionAddSpecificValue: "Add specific value note to the grid. Send a midi message with a value indicated by the edit view.",
+	ActionAddTempoChange:   "Add tempo change note to the grid. While playing change the tempo to the value indicated by the edit view.",
 	SelectKeyLine:          "Selects the current line as the key line. The KeyCycle of the part is advanced when the cursor returns to the first beat",
 	OverlayStackToggle:     "Toggle the behaviour of the current overlay layer between three options: No association, press up, press down",
 	NumberPattern:          "Add/remove notes or increase/decrease values in a pattern",
@@ -521,6 +523,7 @@ func (c Command) String() string {
 		"ActionAddLineBounceAll",
 		"ActionAddLineDelay",
 		"ActionAddSpecificValue",
+		"ActionAddTempoChange",
 		"SelectKeyLine",
 		"OverlayStackToggle",
 		"NumberPattern",
@@ -699,6 +702,7 @@ var mappings = registry{
 	OperationKey{focus: operation.FocusGrid, key: k("f")}:                   NoteAdd,
 	OperationKey{focus: operation.FocusGrid, key: k("b", "r")}:              ReloadFile,
 	OperationKey{focus: operation.FocusGrid, key: k("b", "v")}:              ActionAddSpecificValue,
+	OperationKey{focus: operation.FocusGrid, key: k("b", "T")}:              ActionAddTempoChange,
 	OperationKey{focus: operation.FocusGrid, key: k("h")}:                   CursorLeft,
 	OperationKey{focus: operation.FocusGrid, key: k("j")}:                   CursorDown,
 	OperationKey{focus: operation.FocusGrid, key: k("k")}:                   CursorUp,

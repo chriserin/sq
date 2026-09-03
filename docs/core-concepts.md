@@ -62,4 +62,8 @@ Complex overlay keys support width, start delays, and stacking behaviors.
 
 Some actions have "All" variants (`sS`, `sB`, `sK`) that affect all playback cursors.
 
+A separate pair of **value actions** carry a number instead of manipulating
+the cursor: **Specific Value** (`bv`) sends an exact CC/PC value, and
+**Tempo Change** (`bT`) changes the playing tempo when reached.
+
 > **Detailed Guide**: [Actions](docs/actions.md)

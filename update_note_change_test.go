@@ -945,6 +945,237 @@ func TestNoteAddRemoveAndOverlayRemoveAcrossOverlays(t *testing.T) {
 	}
 }
 
+func TestTempoChangeActionAndCursorMovement(t *testing.T) {
+	tests := []struct {
+		name              string
+		testCommands      []any
+		initialPos        grid.GridKey
+		moveToPos         grid.GridKey
+		expectedSelection operation.Selection
+		expectedValue     int16
+		description       string
+	}{
+		{
+			name:              "Add tempo change action defaults to the sequence's start tempo",
+			testCommands:      []any{mappings.ActionAddTempoChange},
+			initialPos:        grid.GridKey{Line: 0, Beat: 4},
+			expectedSelection: operation.SelectTempoChangeValue,
+			expectedValue:     120,
+			description:       "Should add tempo change action and default its value to the start tempo",
+		},
+		{
+			name:              "Increase tempo change value",
+			testCommands:      []any{mappings.ActionAddTempoChange, mappings.Increase},
+			initialPos:        grid.GridKey{Line: 0, Beat: 4},
+			expectedSelection: operation.SelectTempoChangeValue,
+			expectedValue:     121,
+			description:       "Should increase tempo change value by 1",
+		},
+		{
+			name:              "Move cursor away from tempo change note resets selection indicator",
+			testCommands:      []any{mappings.ActionAddTempoChange, mappings.CursorRight},
+			initialPos:        grid.GridKey{Line: 0, Beat: 4},
+			moveToPos:         grid.GridKey{Line: 0, Beat: 5},
+			expectedSelection: operation.SelectGrid,
+			description:       "Should reset selection indicator when cursor moves away from tempo change note",
+		},
+		{
+			name:              "undo tempo change value",
+			testCommands:      []any{mappings.ActionAddTempoChange, mappings.Increase, mappings.Increase, mappings.Enter, mappings.Undo},
+			initialPos:        grid.GridKey{Line: 0, Beat: 0},
+			expectedSelection: operation.SelectTempoChangeValue,
+			expectedValue:     0,
+			description:       "Undo should restore the tempo change note's previous value and selection indicator",
+		},
+		{
+			name: "Digit entry builds a multi-digit value",
+			testCommands: []any{
+				mappings.ActionAddTempoChange,
+				mappings.Mapping{Command: mappings.NumberPattern, LastValue: "1"},
+				mappings.Mapping{Command: mappings.NumberPattern, LastValue: "8"},
+				mappings.Mapping{Command: mappings.NumberPattern, LastValue: "0"},
+			},
+			initialPos:        grid.GridKey{Line: 0, Beat: 4},
+			expectedSelection: operation.SelectTempoChangeValue,
+			expectedValue:     180,
+			description:       "Typing digits one at a time must accumulate into a multi-digit value, not clamp back to the floor after every keystroke",
+		},
+		{
+			name: "Digit entry with a single low digit is not clamped mid-typing",
+			testCommands: []any{
+				mappings.ActionAddTempoChange,
+				mappings.Mapping{Command: mappings.NumberPattern, LastValue: "5"},
+			},
+			initialPos:        grid.GridKey{Line: 0, Beat: 4},
+			expectedSelection: operation.SelectTempoChangeValue,
+			expectedValue:     5,
+			description:       "A single digit below the real floor of 20 must remain as typed while still editing, so a second digit can be entered",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := createTestModel(WithGridCursor(tt.initialPos))
+			assert.Equal(t, operation.SelectGrid, m.selectionIndicator, "Initial selection should be nothing")
+
+			m, _ = processCommands(tt.testCommands, m)
+
+			assert.Equal(t, tt.expectedSelection, m.selectionIndicator, tt.description+" - selection indicator")
+
+			if tt.moveToPos != (grid.GridKey{}) {
+				assert.Equal(t, tt.moveToPos, m.gridCursor, tt.description+" - cursor position")
+			}
+
+			currentNote, exists := m.CurrentNote()
+			if tt.expectedSelection == operation.SelectTempoChangeValue {
+				assert.True(t, exists, tt.description+" - note should exist")
+				assert.Equal(t, grid.ActionTempoChange, currentNote.Action, tt.description+" - action type")
+				assert.Equal(t, tt.expectedValue, currentNote.GateIndex, tt.description+" - tempo change value")
+			}
+
+			// Playback-affecting fields must never be touched by editing a
+			// tempo-change note's stored value.
+			assert.Equal(t, 120, m.definition.Tempo, tt.description+" - start tempo must be untouched by editing a tempo note")
+		})
+	}
+}
+
+func TestTempoChangeValueClampsToFloorOnlyAfterLeaving(t *testing.T) {
+	tests := []struct {
+		name         string
+		testCommands []any
+		description  string
+	}{
+		{
+			name: "leaving via cursor movement clamps a low typed value to the floor",
+			testCommands: []any{
+				mappings.ActionAddTempoChange,
+				mappings.Mapping{Command: mappings.NumberPattern, LastValue: "5"},
+				mappings.CursorRight,
+			},
+			description: "A value below 20 must be raised to the floor once the user leaves the note, not while still typing",
+		},
+		{
+			name: "leaving via Enter clamps a low typed value to the floor",
+			testCommands: []any{
+				mappings.ActionAddTempoChange,
+				mappings.Mapping{Command: mappings.NumberPattern, LastValue: "5"},
+				mappings.Enter,
+			},
+			description: "A value below 20 must be raised to the floor once the user commits with Enter, not while still typing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initialPos := grid.GridKey{Line: 0, Beat: 4}
+			m := createTestModel(WithGridCursor(initialPos))
+
+			m, _ = processCommands(tt.testCommands, m)
+
+			note, exists := m.currentOverlay.GetNote(initialPos)
+			assert.True(t, exists, tt.description+" - note should still exist")
+			assert.Equal(t, int16(20), note.GateIndex, tt.description)
+		})
+	}
+}
+
+func TestValueActionSelectionSwitchesBetweenAdjacentValueNotes(t *testing.T) {
+	tests := []struct {
+		name              string
+		firstNote         grid.Note
+		firstSelection    operation.Selection
+		secondNote        grid.Note
+		expectedSelection operation.Selection
+	}{
+		{
+			name:              "specific value note followed by tempo change note",
+			firstNote:         grid.Note{Action: grid.ActionSpecificValue, AccentIndex: 42},
+			firstSelection:    operation.SelectSpecificValue,
+			secondNote:        grid.Note{Action: grid.ActionTempoChange, GateIndex: 140},
+			expectedSelection: operation.SelectTempoChangeValue,
+		},
+		{
+			name:              "tempo change note followed by specific value note",
+			firstNote:         grid.Note{Action: grid.ActionTempoChange, GateIndex: 140},
+			firstSelection:    operation.SelectTempoChangeValue,
+			secondNote:        grid.Note{Action: grid.ActionSpecificValue, AccentIndex: 42},
+			expectedSelection: operation.SelectSpecificValue,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := createTestModel(WithGridCursor(grid.GridKey{Line: 0, Beat: 0}), WithGridSize(4, 1), func(m *model) model {
+				m.definition.Lines[0].MsgType = grid.MessageTypeCc
+				return *m
+			})
+
+			m.currentOverlay.SetNote(grid.GridKey{Line: 0, Beat: 0}, tt.firstNote)
+			m.currentOverlay.SetNote(grid.GridKey{Line: 0, Beat: 1}, tt.secondNote)
+
+			// Simulate the cursor having just arrived at the first note.
+			m.SetGridCursor(grid.GridKey{Line: 0, Beat: 0})
+			assert.Equal(t, tt.firstSelection, m.selectionIndicator, "sanity check: first note's value menu should be open")
+
+			m, _ = processCommands([]any{mappings.CursorRight}, m)
+
+			assert.Equal(t, tt.expectedSelection, m.selectionIndicator, "moving directly onto another value-action note must open its own value-entry menu")
+			currentNote, exists := m.CurrentNote()
+			assert.True(t, exists, "second note should exist")
+			assert.Equal(t, tt.secondNote.Action, currentNote.Action, "second note's action")
+		})
+	}
+}
+
+func TestValueActionSelectionResetsWhenNoteDeletedOrMoved(t *testing.T) {
+	tests := []struct {
+		name           string
+		addAction      mappings.Command
+		valueSelection operation.Selection
+		lineMsgType    grid.MessageType
+	}{
+		{"specific value", mappings.ActionAddSpecificValue, operation.SelectSpecificValue, grid.MessageTypeCc},
+		{"tempo change value", mappings.ActionAddTempoChange, operation.SelectTempoChangeValue, grid.MessageTypeNote},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" - deleted via NoteRemove", func(t *testing.T) {
+			m := createTestModel(WithGridCursor(grid.GridKey{Line: 0, Beat: 0}), func(m *model) model {
+				m.definition.Lines[0].MsgType = tt.lineMsgType
+				return *m
+			})
+
+			m, _ = processCommands([]any{tt.addAction}, m)
+			assert.Equal(t, tt.valueSelection, m.selectionIndicator, "sanity check: value menu should be open")
+
+			m, _ = processCommands([]any{mappings.NoteRemove}, m)
+
+			assert.Equal(t, operation.SelectGrid, m.selectionIndicator, "value menu must close when the note is deleted out from under the cursor")
+			_, exists := m.CurrentNote()
+			assert.False(t, exists, "note should actually be gone")
+		})
+
+		t.Run(tt.name+" - moved via RotateRight", func(t *testing.T) {
+			m := createTestModel(WithGridCursor(grid.GridKey{Line: 0, Beat: 0}), WithGridSize(4, 1), func(m *model) model {
+				m.definition.Lines[0].MsgType = tt.lineMsgType
+				return *m
+			})
+
+			m, _ = processCommands([]any{tt.addAction}, m)
+			assert.Equal(t, tt.valueSelection, m.selectionIndicator, "sanity check: value menu should be open")
+
+			// RotateRight shifts the note at the cursor out to the next
+			// beat and pulls whatever was at the last beat (nothing, here)
+			// into the cursor's position, so the cursor's note disappears
+			// without the cursor itself moving.
+			m, _ = processCommands([]any{mappings.RotateRight}, m)
+
+			assert.Equal(t, operation.SelectGrid, m.selectionIndicator, "value menu must close when the note is rotated away from the cursor")
+		})
+	}
+}
+
 func TestRatchetInputSwitch(t *testing.T) {
 	tests := []struct {
 		name              string

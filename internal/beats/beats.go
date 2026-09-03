@@ -192,6 +192,9 @@ func (bl BeatsLooper) Beat(msg BeatMsg, playState playstate.PlayState, definitio
 }
 
 func (bl BeatsLooper) PlaySequence(playState *playstate.PlayState, definition sequence.Sequence, cursor arrangement.ArrCursor, msg BeatMsg) {
+	// NOTE: reset once per beat, before either PlayBeat call below, so it
+	// never carries a stale value from a previous beat forward.
+	playState.PendingTempo = 0
 
 	currentNode := cursor[len(cursor)-1]
 	currentSection := cursor[len(cursor)-1].Section
@@ -222,7 +225,7 @@ func (bl BeatsLooper) PlaySequence(playState *playstate.PlayState, definition se
 	pattern := make(grid.Pattern)
 	playingOverlay.CurrentBeatOverlayPattern(&pattern, currentCycles, gridKeys)
 
-	bl.PlayBeat(msg.Interval, pattern, definition)
+	bl.PlayBeat(msg.Interval, pattern, definition, playState)
 
 	// Play the Note Messages
 	gridKeys = make([]grid.GridKey, 0, len(playState.LineStates))
@@ -231,7 +234,7 @@ func (bl BeatsLooper) PlaySequence(playState *playstate.PlayState, definition se
 	pattern = make(grid.Pattern)
 	playingOverlay.CurrentBeatOverlayPattern(&pattern, currentCycles, gridKeys)
 
-	bl.PlayBeat(msg.Interval, pattern, definition)
+	bl.PlayBeat(msg.Interval, pattern, definition, playState)
 
 	if !playState.AllowAdvance {
 		playState.AllowAdvance = true
@@ -342,7 +345,7 @@ func PlayMove(cursor *arrangement.ArrCursor, iterations *playstate.Iterations, l
 	return true
 }
 
-func (bl BeatsLooper) PlayBeat(beatInterval time.Duration, pattern grid.Pattern, definition sequence.Sequence) {
+func (bl BeatsLooper) PlayBeat(beatInterval time.Duration, pattern grid.Pattern, definition sequence.Sequence, playState *playstate.PlayState) {
 	lines := definition.Lines
 
 	keys := maps.Keys(pattern)
@@ -350,7 +353,15 @@ func (bl BeatsLooper) PlayBeat(beatInterval time.Duration, pattern grid.Pattern,
 
 	for _, gridKey := range sortedKeys {
 		note := pattern[gridKey]
-		if note.Action != grid.ActionNothing && note.Action != grid.ActionSpecificValue {
+		if note.Action != grid.ActionNothing &&
+			note.Action != grid.ActionSpecificValue &&
+			note.Action != grid.ActionTempoChange {
+			continue
+		}
+		if note.Action == grid.ActionTempoChange {
+			// NOTE: If multiple tempo-change notes land on the same beat, the last
+			// one processed wins.
+			playState.PendingTempo = int(note.GateIndex)
 			continue
 		}
 		line := lines[gridKey.Line]

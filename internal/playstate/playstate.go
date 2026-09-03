@@ -30,6 +30,9 @@ type PlayState struct {
 	LoopPoolNotes     map[*arrangement.Arrangement]uint8
 	LoopedArrangement *arrangement.Arrangement
 	BoundedLoop       BoundedLoop
+	// PendingTempo requested by an ActionTempoChange note encountered on the
+	// beat just played, or 0 if none was encountered.
+	PendingTempo int
 }
 
 type BoundedLoop struct {

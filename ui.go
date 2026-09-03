@@ -82,28 +82,30 @@ func (va VisualSelection) Bounds(totalBeats uint8) grid.Bounds {
 }
 
 type model struct {
-	firstDigitApplied     bool
-	hasUIFocus            bool
-	transmitterConnected  bool
-	logFileAvailable      bool
-	playEditing           bool
-	showArrangementView   bool
-	hideEmptyLines        bool
-	modifyKey             bool
-	transmitting          bool
-	clockPreRoll          bool
-	euclideanHits         uint8
-	ratchetCursor         uint8
-	temporaryNoteValue    uint8
-	sectionSideIndicator  SectionSide
-	selectionIndicator    operation.Selection
-	patternMode           operation.PatternMode
-	midiLoopMode          timing.MidiLoopMode
-	gridCursor            gridKey
-	visualSelection       VisualSelection
-	partSelectorIndex     int
-	needsWrite            int
-	editingPartID         int
+	firstDigitApplied    bool
+	hasUIFocus           bool
+	transmitterConnected bool
+	logFileAvailable     bool
+	playEditing          bool
+	showArrangementView  bool
+	hideEmptyLines       bool
+	modifyKey            bool
+	transmitting         bool
+	clockPreRoll         bool
+	euclideanHits        uint8
+	ratchetCursor        uint8
+	temporaryNoteValue   int16
+	sectionSideIndicator SectionSide
+	selectionIndicator   operation.Selection
+	patternMode          operation.PatternMode
+	midiLoopMode         timing.MidiLoopMode
+	gridCursor           gridKey
+	visualSelection      VisualSelection
+	partSelectorIndex    int
+	needsWrite           int
+	editingPartID        int
+	// playing tempo is a transitive value not persisted between plays
+	playingTempo          int
 	focus                 operation.Focus
 	cancel                context.CancelFunc
 	currentOverlay        *overlays.Overlay
@@ -127,9 +129,36 @@ type model struct {
 	activeChord           overlays.OverlayChord
 	temporaryState        temporaryState
 	// play state
-	playState playstate.PlayState
-	// save everything below here
+	playState  playstate.PlayState
 	definition sequence.Sequence
+}
+
+// isActionValue reports whether act is a value-carrying grid action (its
+// note stores a payload consumed by playback and edited via digit entry).
+func isActionValue(act action) bool {
+	return act == grid.ActionSpecificValue || act == grid.ActionTempoChange
+}
+
+// actionValueSelection returns the operation.Selection used while editing
+// the value of a value-carrying grid action.
+func actionValueSelection(act action) operation.Selection {
+	switch act {
+	case grid.ActionTempoChange:
+		return operation.SelectTempoChangeValue
+	default:
+		return operation.SelectSpecificValue
+	}
+}
+
+// actionValue extracts a value-carrying grid action's payload, regardless of
+// which underlying Note field it's stored in.
+func actionValue(n note) int16 {
+	switch n.Action {
+	case grid.ActionTempoChange:
+		return n.GateIndex
+	default:
+		return int16(n.AccentIndex)
+	}
 }
 
 func (m *model) SetGridCursor(key gridKey) {
@@ -137,40 +166,80 @@ func (m *model) SetGridCursor(key gridKey) {
 	currentPosition := m.gridCursor
 	m.gridCursor = key
 	newNote, noteExists := m.CurrentNote()
-	if currentExists && currentNote.Action == grid.ActionSpecificValue && currentPosition != key {
-		m.PushSpecificValueUndoable(currentPosition, m.temporaryNoteValue, currentNote.AccentIndex)
+	// NOTE: leaving one value-action note and landing directly on another
+	// (e.g. a specific-value note next to a tempo-change note) must handle
+	// both transitions — this can't be an if/else-if, or entering the new
+	// note's value-entry menu gets skipped.
+	leavingValueNote := currentExists && isActionValue(currentNote.Action) && currentPosition != key
+	if leavingValueNote {
+		currentNote = m.ClampActionValue(currentPosition, currentNote)
+		m.PushActionValueUndoable(currentPosition, currentNote.Action, m.temporaryNoteValue, actionValue(currentNote))
+	}
+	if noteExists && isActionValue(newNote.Action) {
+		m.RecordSpecificValue(actionValue(newNote))
+		m.SetSelectionIndicator(actionValueSelection(newNote.Action))
+	} else if leavingValueNote {
 		m.SetSelectionIndicator(operation.SelectGrid)
-	} else if noteExists && newNote.Action == grid.ActionSpecificValue {
-		m.RecordSpecificValue(newNote.AccentIndex)
-		m.SetSelectionIndicator(operation.SelectSpecificValue)
 	}
 }
 
-func (m *model) RecordSpecificValue(value uint8) {
+// SyncActionValueSelection resets the selection indicator back to SelectGrid
+// if a value-carrying action's edit menu (SelectSpecificValue /
+// SelectTempoChangeValue) is open but the note it was editing no longer
+// exists or no longer matches — e.g. a keybinding (NoteRemove, ClearLine,
+// Rotate, etc.) deleted or moved it out from under the cursor without going
+// through SetGridCursor, which normally handles this transition.
+func (m *model) SyncActionValueSelection() {
+	if m.selectionIndicator != operation.SelectSpecificValue && m.selectionIndicator != operation.SelectTempoChangeValue {
+		return
+	}
+	currentNote, exists := m.CurrentNote()
+	if !exists || !isActionValue(currentNote.Action) || actionValueSelection(currentNote.Action) != m.selectionIndicator {
+		m.SetSelectionIndicator(operation.SelectGrid)
+	}
+}
+
+func (m *model) RecordSpecificValue(value int16) {
 	m.temporaryNoteValue = value
 }
 
 func (m *model) RecordSpecificValueUndo() {
 	currentNote, noteExists := m.CurrentNote()
-	if noteExists && currentNote.Action == grid.ActionSpecificValue {
-		m.PushSpecificValueUndoable(m.gridCursor, m.temporaryNoteValue, currentNote.AccentIndex)
+	if noteExists && isActionValue(currentNote.Action) {
+		currentNote = m.ClampActionValue(m.gridCursor, currentNote)
+		m.PushActionValueUndoable(m.gridCursor, currentNote.Action, m.temporaryNoteValue, actionValue(currentNote))
 	}
 }
 
-func (m *model) PushSpecificValueUndoable(position gridKey, oldValue, newValue uint8) {
+// ClampActionValue enforces a value-carrying action's real valid range once
+// digit entry is done (cursor moved away, or Enter pressed). Digit entry
+// itself (SetTempoChangeValue) uses a looser floor while typing, since a
+// tight floor like 20 would clamp every single-digit intermediate value
+// (e.g. typing "1" of "180") back to the floor and abort entry.
+func (m *model) ClampActionValue(position gridKey, n note) note {
+	if n.Action == grid.ActionTempoChange && n.GateIndex < 20 {
+		n.GateIndex = 20
+		m.currentOverlay.SetNote(position, n)
+	}
+	return n
+}
+
+func (m *model) PushActionValueUndoable(position gridKey, act action, oldValue, newValue int16) {
 	if oldValue != newValue {
 		m.PushUndoables(
-			UndoSpecificValue{
+			UndoActionValue{
 				ArrCursor:      m.arrangement.Cursor,
 				overlayKey:     m.currentOverlay.Key,
 				cursorPosition: position,
-				specificValue:  oldValue,
+				action:         act,
+				value:          oldValue,
 			},
-			UndoSpecificValue{
+			UndoActionValue{
 				ArrCursor:      m.arrangement.Cursor,
 				overlayKey:     m.currentOverlay.Key,
 				cursorPosition: position,
-				specificValue:  newValue,
+				action:         act,
+				value:          newValue,
 			},
 		)
 	}
@@ -380,6 +449,7 @@ func (s StateDiff) Apply(m *model) {
 	}
 	if s.TempoChanged {
 		m.definition.Tempo = s.NewTempo
+		m.playingTempo = s.NewTempo
 		m.SyncTempo()
 	}
 	if s.SubdivisionsChanged {
@@ -427,7 +497,7 @@ type viewPanicMsg struct {
 func (m model) SyncTempo() {
 	go func() {
 		timingChannel <- timing.TempoMsg{
-			Tempo:        m.definition.Tempo,
+			Tempo:        m.playingTempo,
 			Subdivisions: m.definition.Subdivisions,
 		}
 	}()
@@ -681,29 +751,18 @@ func (m *model) DecreaseAccentTarget() {
 }
 
 func (m *model) IncreaseTempo(amount int) {
-	newAmount := m.definition.Tempo + amount
-	if newAmount <= 300 {
-		m.definition.Tempo = newAmount
-		m.SyncTempo()
-	} else if m.definition.Tempo == 300 {
-		// do nothing if already at 300
-	} else if newAmount > 300 {
-		m.definition.Tempo = 300
-		m.SyncTempo()
-	}
+	// NOTE: start tempo and playing tempo move together here so a
+	// keybinding-driven change (unlike an ActionTempoChange note) always
+	// sticks for the next play session too.
+	m.definition.Tempo = min(m.definition.Tempo+amount, 300)
+	m.playingTempo = min(m.playingTempo+amount, 300)
+	m.SyncTempo()
 }
 
 func (m *model) DecreaseTempo(amount int) {
-	newAmount := m.definition.Tempo - amount
-	if newAmount > 30 {
-		m.definition.Tempo = newAmount
-		m.SyncTempo()
-	} else if m.definition.Tempo == 30 {
-		// do nothing if already at 30
-	} else if newAmount < 30 {
-		m.definition.Tempo = 30
-		m.SyncTempo()
-	}
+	m.definition.Tempo = max(m.definition.Tempo-amount, 30)
+	m.playingTempo = max(m.playingTempo-amount, 30)
+	m.SyncTempo()
 }
 
 func (m *model) IncreaseBeats() {
@@ -852,6 +911,7 @@ func InitModel(filename string, midiConnection *seqmidi.MidiConnection, options 
 		overlayKeyEdit:        overlaykey.InitModel(),
 		arrangement:           arrangement.InitModel(definition.Arrangement, definition.Parts),
 		definition:            definition,
+		playingTempo:          definition.Tempo,
 		playState: playstate.PlayState{
 			LineStates: playstate.InitLineStates(len(definition.Lines), []playstate.LineState{}, 0),
 		},
@@ -1228,13 +1288,13 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 		case mappings.HoldingKeys:
 			return m, nil
 		case mappings.CursorDown:
-			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSetupOutput, operation.SelectSpecificValue}, m.selectionIndicator) {
+			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSetupOutput, operation.SelectSpecificValue, operation.SelectTempoChangeValue}, m.selectionIndicator) {
 				m.CursorDown()
 				m.UnsetActiveChord()
 				m.SetVisualArea()
 			}
 		case mappings.CursorUp:
-			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSetupOutput, operation.SelectSpecificValue}, m.selectionIndicator) {
+			if slices.Contains([]operation.Selection{operation.SelectGrid, operation.SelectSetupChannel, operation.SelectSetupMessageType, operation.SelectSetupValue, operation.SelectSetupOutput, operation.SelectSpecificValue, operation.SelectTempoChangeValue}, m.selectionIndicator) {
 				m.CursorUp()
 				m.UnsetActiveChord()
 				m.SetVisualArea()
@@ -1244,7 +1304,7 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 				if m.ratchetCursor > 0 {
 					m.ratchetCursor--
 				}
-			} else if m.selectionIndicator > operation.SelectGrid && m.selectionIndicator != operation.SelectSpecificValue {
+			} else if m.selectionIndicator > operation.SelectGrid && m.selectionIndicator != operation.SelectSpecificValue && m.selectionIndicator != operation.SelectTempoChangeValue {
 				// Do Nothing
 			} else {
 				m.CursorLeft()
@@ -1257,7 +1317,7 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 				if m.ratchetCursor < currentNote.Ratchets.Length {
 					m.ratchetCursor++
 				}
-			} else if m.selectionIndicator > operation.SelectGrid && m.selectionIndicator != operation.SelectSpecificValue {
+			} else if m.selectionIndicator > operation.SelectGrid && m.selectionIndicator != operation.SelectSpecificValue && m.selectionIndicator != operation.SelectTempoChangeValue {
 				// Do Nothing
 			} else {
 				m.CursorRight()
@@ -1512,6 +1572,9 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 			case operation.SelectSpecificValue:
 				note, _ := m.CurrentNote()
 				m.IncrementSpecificValue(note)
+			case operation.SelectTempoChangeValue:
+				note, _ := m.CurrentNote()
+				m.IncrementTempoChangeValue(note)
 			default:
 				m.IncreaseTempo(5)
 			}
@@ -1561,6 +1624,9 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 			case operation.SelectSpecificValue:
 				note, _ := m.CurrentNote()
 				m.DecrementSpecificValue(note)
+			case operation.SelectTempoChangeValue:
+				note, _ := m.CurrentNote()
+				m.DecrementTempoChangeValue(note)
 			default:
 				m.DecreaseTempo(5)
 			}
@@ -1618,6 +1684,7 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 			if tempo != m.definition.Tempo || subdiv != m.definition.Subdivisions {
 				m.SyncTempo()
 			}
+			m.SyncActionValueSelection()
 		case mappings.Redo:
 			tempo, subdiv := m.definition.Tempo, m.definition.Subdivisions
 			undoStack := m.Redo()
@@ -1627,6 +1694,7 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 			if tempo != m.definition.Tempo || subdiv != m.definition.Subdivisions {
 				m.SyncTempo()
 			}
+			m.SyncActionValueSelection()
 		case mappings.New:
 			m.selectionIndicator = operation.SelectConfirmNew
 		case mappings.ToggleVisualMode:
@@ -1763,6 +1831,14 @@ func (m model) Update(msg tea.Msg) (rModel tea.Model, rCmd tea.Cmd) {
 		if m.playState.Playing {
 			m.playState = msg.PlayState
 			m.arrangement.Cursor = msg.Cursor
+			if msg.PlayState.PendingTempo != 0 {
+				// NOTE: an ActionTempoChange note fired this beat. This only
+				// ever updates the live playing tempo, never the sequence's
+				// start tempo, and is deliberately not undoable (see
+				// tempo-change.md).
+				m.playingTempo = msg.PlayState.PendingTempo
+				m.SyncTempo()
+			}
 		}
 		if msg.PerformStop {
 			m.playState.LineStates = playstate.InitLineStates(len(m.definition.Lines), m.playState.LineStates, 0)
@@ -1971,6 +2047,7 @@ func (m *model) ClampAccentValues() {
 func (m *model) ClampAndSyncTempo() {
 	if m.selectionIndicator == operation.SelectTempo {
 		m.definition.Tempo = max(min(m.definition.Tempo, 300), 20)
+		m.playingTempo = m.definition.Tempo
 		m.SyncTempo()
 	}
 }
@@ -1980,6 +2057,7 @@ func (m model) NewSequence() model {
 
 	definition, _ := LoadFile("", m.definition.Template, m.definition.Instrument)
 	newModel.definition = definition
+	newModel.playingTempo = definition.Tempo
 	newModel.arrangement = arrangement.InitModel(definition.Arrangement, definition.Parts)
 	newModel.ResetIterations()
 	newModel.SetGridCursor(GK(0, 0))
@@ -2051,6 +2129,11 @@ func (m *model) ResetIterations() {
 func (m *model) Start(delay time.Duration) {
 	m.midiConnection.EnsureConnection()
 
+	// NOTE: Every play session starts at the sequence's start tempo,
+	// regardless of where a prior session's playing tempo (see
+	// ActionTempoChange) ended up — this is what keeps playback repeatable.
+	m.playingTempo = m.definition.Tempo
+
 	m.ResetIterations()
 	m.arrangement.ResetDepth()
 
@@ -2094,7 +2177,7 @@ func (m *model) Start(delay time.Duration) {
 			// NOTE: Order matters here, modelMsg must be sent before startMsg
 			updateChannel <- beats.ModelMsg{Sequence: m.definition, PlayState: m.playState, Cursor: m.arrangement.Cursor}
 			if m.playState.PlayMode != playstate.PlayReceiver {
-				timingChannel <- timing.StartMsg{LoopMode: m.playState.LoopMode, Tempo: m.definition.Tempo, Subdivisions: m.definition.Subdivisions, Prerollbeats: m.playState.RecordPreRollBeats, Transmitting: m.transmitting}
+				timingChannel <- timing.StartMsg{LoopMode: m.playState.LoopMode, Tempo: m.playingTempo, Subdivisions: m.definition.Subdivisions, Prerollbeats: m.playState.RecordPreRollBeats, Transmitting: m.transmitting}
 			}
 		})
 	}
@@ -2175,6 +2258,9 @@ func (m model) UpdateDefinitionKeys(mapping mappings.Mapping) model {
 			case operation.SelectSpecificValue:
 				note, _ := m.CurrentNote()
 				m.SetSpecificValue(note, number)
+			case operation.SelectTempoChangeValue:
+				note, _ := m.CurrentNote()
+				m.SetTempoChangeValue(note, number)
 			case operation.SelectStartBeats:
 				m.SetStartBeats(number)
 			case operation.SelectStartCycles:
@@ -2263,6 +2349,13 @@ func (m model) UpdateDefinitionKeys(mapping mappings.Mapping) model {
 			m.AddAction(grid.ActionSpecificValue)
 			m.SetSelectionIndicator(operation.SelectSpecificValue)
 		}
+	case mappings.ActionAddTempoChange:
+		m.AddAction(grid.ActionTempoChange)
+		if tempoNote, exists := m.CurrentNote(); exists {
+			tempoNote.GateIndex = int16(m.definition.Tempo)
+			m.currentOverlay.SetNote(m.gridCursor, tempoNote)
+		}
+		m.SetSelectionIndicator(operation.SelectTempoChangeValue)
 	case mappings.SelectKeyLine:
 		m.definition.Keyline = m.gridCursor.Line
 	case mappings.OverlayStackToggle:
@@ -2469,6 +2562,7 @@ func (m model) UpdateDefinitionKeys(mapping mappings.Mapping) model {
 		}
 	}
 
+	m.SyncActionValueSelection()
 	return m
 }
 
@@ -2515,6 +2609,7 @@ func (m *model) SetTempoSubdivision(number int) {
 
 func (m *model) SetTempo(number int) {
 	m.definition.Tempo = m.clamp(m.UnshiftDigit(m.definition.Tempo, number), 1, 300)
+	m.playingTempo = m.definition.Tempo
 }
 
 func (m *model) SetStartCycles(number int) {
@@ -2555,6 +2650,16 @@ func (m *model) SetSpecificValue(note note, number int) {
 	newValue := m.UnshiftDigit(int(value), number)
 	clampedValue := m.clamp(newValue, 0, 127)
 	note.AccentIndex = uint8(clampedValue)
+	m.currentOverlay.SetNote(m.gridCursor, note)
+}
+
+func (m *model) SetTempoChangeValue(note note, number int) {
+	value := note.GateIndex
+	newValue := m.UnshiftDigit(int(value), number)
+	// NOTE: The real floor is enforced by ClampActionValue once
+	// entry is done (cursor moves away or Enter is pressed).
+	clampedValue := m.clamp(newValue, 1, 300)
+	note.GateIndex = int16(clampedValue)
 	m.currentOverlay.SetNote(m.gridCursor, note)
 }
 
@@ -3859,6 +3964,20 @@ func (m *model) IncrementSpecificValue(note grid.Note) {
 func (m *model) DecrementSpecificValue(note grid.Note) {
 	if note.AccentIndex > 0 {
 		note.AccentIndex = note.AccentIndex - 1
+		m.currentOverlay.SetNote(m.gridCursor, note)
+	}
+}
+
+func (m *model) IncrementTempoChangeValue(note grid.Note) {
+	if note.GateIndex < 300 {
+		note.GateIndex = note.GateIndex + 1
+		m.currentOverlay.SetNote(m.gridCursor, note)
+	}
+}
+
+func (m *model) DecrementTempoChangeValue(note grid.Note) {
+	if note.GateIndex > 20 {
+		note.GateIndex = note.GateIndex - 1
 		m.currentOverlay.SetNote(m.gridCursor, note)
 	}
 }

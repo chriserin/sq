@@ -132,6 +132,79 @@ func TestSpecificValueActionEmitsMessage(t *testing.T) {
 	}
 }
 
+func TestActionTempoChangeSetsPendingTempo(t *testing.T) {
+	bl := BeatsLooper{}
+	definition := sequence.Sequence{
+		Lines: []grid.LineDefinition{{Channel: 1, Note: 10, MsgType: grid.MessageTypeCc}},
+	}
+	pattern := grid.Pattern{
+		grid.GridKey{Line: 0, Beat: 0}: grid.Note{Action: grid.ActionTempoChange, GateIndex: 160},
+	}
+	playState := &playstate.PlayState{}
+
+	bl.PlayBeat(0, pattern, definition, playState)
+
+	assert.Equal(t, 160, playState.PendingTempo, "PlayBeat should surface the tempo-change note's GateIndex as PendingTempo")
+}
+
+// PlaySequence calls PlayBeat twice per beat (once for CC/PC lines, once for
+// Note lines). A tempo-change note found by the first call must survive the
+// second call even when the second call finds nothing — only PlaySequence,
+// not PlayBeat, is responsible for resetting PendingTempo between beats.
+func TestActionTempoChangePendingTempoSurvivesSecondPlayBeatCall(t *testing.T) {
+	bl := BeatsLooper{}
+	definition := sequence.Sequence{
+		Lines: []grid.LineDefinition{{Channel: 1, Note: 10, MsgType: grid.MessageTypeCc}},
+	}
+	tempoPattern := grid.Pattern{
+		grid.GridKey{Line: 0, Beat: 0}: grid.Note{Action: grid.ActionTempoChange, GateIndex: 160},
+	}
+	emptyPattern := grid.Pattern{}
+	playState := &playstate.PlayState{}
+
+	bl.PlayBeat(0, tempoPattern, definition, playState)
+	bl.PlayBeat(0, emptyPattern, definition, playState)
+
+	assert.Equal(t, 160, playState.PendingTempo, "a tempo note found in one PlayBeat call must survive a second PlayBeat call within the same beat")
+}
+
+func TestActionTempoChangePendingTempoResetsEachBeat(t *testing.T) {
+	bl := BeatsLooper{}
+	testSequence, cursor := SimpleSequence()
+	testSequence.Lines = []grid.LineDefinition{{Channel: 1, Note: 10, MsgType: grid.MessageTypeCc}}
+	(*testSequence.Parts)[0].Beats = 2
+	(*testSequence.Parts)[0].Overlays.AddNote(grid.GridKey{Line: 0, Beat: 0}, grid.Note{Action: grid.ActionTempoChange, GateIndex: 160})
+
+	iterations := make(playstate.Iterations)
+	playstate.BuildIterationsMap(testSequence.Arrangement, &iterations)
+	baseline := make(playstate.Iterations, len(iterations))
+	maps.Copy(baseline, iterations)
+
+	playState := &playstate.PlayState{
+		LineStates: playstate.InitLineStates(len(testSequence.Lines), []playstate.LineState{}, 0),
+		Iterations: &iterations,
+		Baseline:   &baseline,
+	}
+
+	bl.PlaySequence(playState, testSequence, cursor, BeatMsg{Interval: 0})
+	assert.Equal(t, 160, playState.PendingTempo, "beat 0 has a tempo-change note")
+
+	playState.LineStates[0].CurrentBeat = 1
+	bl.PlaySequence(playState, testSequence, cursor, BeatMsg{Interval: 0})
+	assert.Equal(t, 0, playState.PendingTempo, "beat 1 has no tempo-change note, so PendingTempo must not leak from beat 0")
+}
+
+func TestActionTempoChangeEmitsNoMidiMessage(t *testing.T) {
+	testSequence, cursor := SimpleSequence()
+	testSequence.Lines = []grid.LineDefinition{{Channel: 1, Note: 10, MsgType: grid.MessageTypeCc}}
+	(*testSequence.Parts)[0].Beats = 1
+	(*testSequence.Parts)[0].Overlays.AddNote(grid.GridKey{Line: 0, Beat: 0}, grid.Note{Action: grid.ActionTempoChange, GateIndex: 160})
+
+	_, testMessages := PlayTestLoop(testSequence, cursor, 4, playstate.PlayState{Playing: true}, t.Context())
+
+	assert.Empty(t, testMessages, "an ActionTempoChange note must not emit any MIDI message; it only changes the clock")
+}
+
 func TestRatchet(t *testing.T) {
 	tests := []struct {
 		name                 string

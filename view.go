@@ -181,8 +181,17 @@ func (m model) BeatsEditView() string {
 }
 
 func (m model) TempoEditView() string {
+	// NOTE: while playing, an ActionTempoChange note may have moved the live
+	// tempo away from the sequence's start tempo (m.definition.Tempo);
+	// stopping naturally reverts the display since playingTempo is only ever
+	// read here while playing.
+	displayTempo := m.definition.Tempo
+	if m.playState.Playing {
+		displayTempo = m.playingTempo
+	}
+
 	var tempo, division string
-	tempo = themes.NumberStyle.Render(strconv.Itoa(m.definition.Tempo))
+	tempo = themes.NumberStyle.Render(strconv.Itoa(displayTempo))
 	division = themes.NumberStyle.Render(strconv.Itoa(m.definition.Subdivisions))
 	switch m.selectionIndicator {
 	case operation.SelectTempo:
@@ -204,6 +213,15 @@ func (m model) SpecificValueEditView(note grid.Note) string {
 	var buf strings.Builder
 	buf.WriteString(themes.AltArtStyle.Render(" Specific Value "))
 	buf.WriteString(specificValue)
+	buf.WriteString("\n")
+	return buf.String()
+}
+
+func (m model) TempoChangeValueEditView(note grid.Note) string {
+	var tempoValue = themes.SelectedStyle.Render(fmt.Sprintf("%d", note.GateIndex))
+	var buf strings.Builder
+	buf.WriteString(themes.AltArtStyle.Render(" Tempo Change Value "))
+	buf.WriteString(tempoValue)
 	buf.WriteString("\n")
 	return buf.String()
 }
@@ -521,6 +539,8 @@ func (m model) SeqView(showLines []uint8) string {
 		buf.WriteString(m.ConfirmReloadView())
 	} else if m.selectionIndicator == operation.SelectSpecificValue {
 		buf.WriteString(m.SpecificValueEditView(currentNote.Note))
+	} else if m.selectionIndicator == operation.SelectTempoChangeValue {
+		buf.WriteString(m.TempoChangeValueEditView(currentNote.Note))
 	} else if m.selectionIndicator == operation.SelectEuclideanHits {
 		buf.WriteString(m.EuclideanHitsEditView())
 	} else if m.playState.Playing {
@@ -849,7 +869,8 @@ func lineView(lineNumber uint8, m model, visualCombinedPattern overlays.OverlayP
 			style = style.Foreground(foregroundColor)
 		}
 
-		if overlayNote.Note.GateIndex > int16(len(config.ShortGates))-1 && int(overlayNote.Note.GateIndex) < int(len(config.ShortGates)+len(config.LongGates)) {
+		if overlayNote.Note.Action == grid.ActionNothing &&
+			overlayNote.Note.GateIndex > int16(len(config.ShortGates))-1 && int(overlayNote.Note.GateIndex) < int(len(config.ShortGates)+len(config.LongGates)) {
 			gateSpaceValue := config.LongGates[overlayNote.Note.GateIndex-8].Shape
 			gateSpace.StringValue = []rune(gateSpaceValue)
 			gateSpace.Color = foregroundColor

@@ -60,6 +60,7 @@ var Lineactions = map[grid.Action]lineaction{
 	grid.ActionLineBounceAll: {"↨͚͒", lipgloss.Color("#fcf6b1")},
 	grid.ActionLineDelay:     {"ℤ", lipgloss.Color("#cc4bc2")},
 	grid.ActionSpecificValue: {"V", lipgloss.Color("#cc4bc2")},
+	grid.ActionTempoChange:   {"T", lipgloss.Color("#5cdffb")},
 }
 
 type ratchetDiacritical string

@@ -38,21 +38,31 @@ func (ub UndoBeats) ApplyUndo(m *model) Location {
 	return Location{ApplyLocation: false}
 }
 
-type UndoSpecificValue struct {
+// UndoActionValue undoes/redoes the stored value of a value-carrying grid
+// action (e.g. ActionSpecificValue's AccentIndex or ActionTempoChange's
+// GateIndex).
+type UndoActionValue struct {
 	overlayKey     overlayKey
 	cursorPosition gridKey
 	ArrCursor      arrangement.ArrCursor
-	specificValue  uint8
+	action         grid.Action
+	value          int16
 }
 
-func (usv UndoSpecificValue) ApplyUndo(m *model) Location {
-	m.arrangement.Cursor = usv.ArrCursor
-	overlay := m.CurrentPart().Overlays.FindOverlay(usv.overlayKey)
-	overlay.SetNote(usv.cursorPosition, note{Action: grid.ActionSpecificValue, AccentIndex: usv.specificValue})
-	m.selectionIndicator = operation.SelectSpecificValue
+func (uav UndoActionValue) ApplyUndo(m *model) Location {
+	m.arrangement.Cursor = uav.ArrCursor
+	overlay := m.CurrentPart().Overlays.FindOverlay(uav.overlayKey)
+	switch uav.action {
+	case grid.ActionSpecificValue:
+		overlay.SetNote(uav.cursorPosition, note{Action: uav.action, AccentIndex: uint8(uav.value)})
+		m.selectionIndicator = operation.SelectSpecificValue
+	case grid.ActionTempoChange:
+		overlay.SetNote(uav.cursorPosition, note{Action: uav.action, GateIndex: uav.value})
+		m.selectionIndicator = operation.SelectTempoChangeValue
+	}
 	return Location{
-		OverlayKey:    usv.overlayKey,
-		GridKey:       usv.cursorPosition,
+		OverlayKey:    uav.overlayKey,
+		GridKey:       uav.cursorPosition,
 		ApplyLocation: true,
 	}
 }

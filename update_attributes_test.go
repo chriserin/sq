@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/chriserin/sq/internal/beats"
 	"github.com/chriserin/sq/internal/grid"
 	"github.com/chriserin/sq/internal/mappings"
 	"github.com/chriserin/sq/internal/operation"
@@ -101,6 +102,85 @@ func TestTempoChanges(t *testing.T) {
 			assert.Equal(t, tt.expectedTempo, m.definition.Tempo, tt.description)
 		})
 	}
+}
+
+func TestTempoChangesAlsoUpdatePlayingTempo(t *testing.T) {
+	tests := []struct {
+		name          string
+		commands      []any
+		initialTempo  int
+		expectedTempo int
+		description   string
+	}{
+		{
+			name:          "Increase Tempo by 5",
+			commands:      []any{mappings.Increase},
+			initialTempo:  120,
+			expectedTempo: 125,
+			description:   "Keybinding-driven tempo changes must move the playing tempo with the start tempo",
+		},
+		{
+			name:          "Decrease Tempo by 5",
+			commands:      []any{mappings.Decrease},
+			initialTempo:  130,
+			expectedTempo: 125,
+			description:   "Keybinding-driven tempo changes must move the playing tempo with the start tempo",
+		},
+		{
+			name:          "Explicit digit entry",
+			commands:      []any{mappings.TempoInputSwitch, mappings.Mapping{Command: mappings.NumberPattern, LastValue: "5"}},
+			initialTempo:  120,
+			expectedTempo: 5,
+			description:   "An explicit tempo entry collapses playing tempo to the same value as start tempo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := createTestModel(func(m *model) model {
+				m.definition.Tempo = tt.initialTempo
+				m.playingTempo = tt.initialTempo
+				return *m
+			})
+			m, _ = processCommands(tt.commands, m)
+			assert.Equal(t, tt.expectedTempo, m.definition.Tempo, tt.description)
+			assert.Equal(t, tt.expectedTempo, m.playingTempo, tt.description)
+		})
+	}
+}
+
+func TestActionTempoChangePlaybackUpdatesPlayingTempoOnly(t *testing.T) {
+	m := createTestModel(func(m *model) model {
+		m.definition.Tempo = 120
+		m.playingTempo = 120
+		m.playState.Playing = true
+		return *m
+	})
+
+	playedState := m.playState
+	playedState.PendingTempo = 180
+
+	updatedModel, _ := m.Update(beats.ModelPlayedMsg{PlayState: playedState, Cursor: m.arrangement.Cursor})
+	um := updatedModel.(model)
+
+	assert.Equal(t, 180, um.playingTempo, "playing tempo should follow the ActionTempoChange note")
+	assert.Equal(t, 120, um.definition.Tempo, "an ActionTempoChange note must never change the start tempo")
+	assert.Equal(t, EmptyStack, um.undoStack, "playback-driven tempo changes must not be undoable")
+}
+
+func TestStartResetsPlayingTempoToStartTempo(t *testing.T) {
+	m := createTestModel(func(m *model) model {
+		m.definition.Tempo = 100
+		// Simulate a prior play session having drifted away from the start
+		// tempo via an ActionTempoChange note.
+		m.playingTempo = 999
+		m.playState.Playing = false
+		return *m
+	})
+
+	m.Start(0)
+
+	assert.Equal(t, 100, m.playingTempo, "every play session must start at the sequence's start tempo, regardless of where a previous session's playing tempo ended up")
 }
 
 func TestTempoInputSwitchEscapes(t *testing.T) {
