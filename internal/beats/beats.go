@@ -350,7 +350,7 @@ func (bl BeatsLooper) PlayBeat(beatInterval time.Duration, pattern grid.Pattern,
 
 	for _, gridKey := range sortedKeys {
 		note := pattern[gridKey]
-		if note.Action != grid.ActionNothing {
+		if note.Action != grid.ActionNothing && note.Action != grid.ActionSpecificValue {
 			continue
 		}
 		line := lines[gridKey.Line]

@@ -94,6 +94,44 @@ func TestOneNote(t *testing.T) {
 	}
 }
 
+func TestSpecificValueActionEmitsMessage(t *testing.T) {
+	tests := []struct {
+		name                 string
+		line                 grid.LineDefinition
+		expectedMidiMessages []seqmidi.Message
+	}{
+		{
+			"CC line with specific value action",
+			grid.LineDefinition{Channel: 1, Note: 10, MsgType: grid.MessageTypeCc},
+			[]seqmidi.Message{{Msg: midi.ControlChange(0, 10, 42), Delay: 0}},
+		},
+		{
+			"Program Change line with specific value action",
+			grid.LineDefinition{Channel: 1, Note: 10, MsgType: grid.MessageTypeProgramChange},
+			[]seqmidi.Message{{Msg: midi.ProgramChange(0, 42), Delay: 0}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sequence, cursor := SimpleSequence()
+
+			sequence.Lines = []grid.LineDefinition{tt.line}
+			(*sequence.Parts)[0].Beats = 1
+			(*sequence.Parts)[0].Overlays.AddNote(grid.GridKey{Line: 0, Beat: 0}, grid.Note{Action: grid.ActionSpecificValue, AccentIndex: 42})
+
+			_, testMessages := PlayTestLoop(sequence, cursor, 4, playstate.PlayState{Playing: true}, t.Context())
+
+			if assert.Len(t, testMessages, len(tt.expectedMidiMessages), "Number of MIDI messages") {
+				for i, msg := range tt.expectedMidiMessages {
+					assert.Equal(t, msg.Delay, testMessages[i].Delay, "Delay")
+					assert.Equal(t, msg.Msg, testMessages[i].Msg, "MIDI message")
+				}
+			}
+		})
+	}
+}
+
 func TestRatchet(t *testing.T) {
 	tests := []struct {
 		name                 string
